@@ -99,3 +99,13 @@ tutorials/embedding/text8
 tutorials/embedding/questions-words.txt
 
 samples/outreach/blogs/segmentation_blogpost/carvana-image-masking-challenge/
+.vscode/settings.json
+research/slim/.vscode/launch.json
+research/slim/.vscode/settings.json
+research/slim/temp/annotations/categories.json
+research/slim/temp/images/train_val2018.tar.gz
+research/slim/temp/annotations/categories.json.tar.gz
+research/slim/temp/annotations/train2018.json
+research/slim/temp/annotations/train2018.json.tar.gz
+research/slim/temp/annotations/val2018.json
+research/slim/temp/annotations/val2018.json.tar.gz
