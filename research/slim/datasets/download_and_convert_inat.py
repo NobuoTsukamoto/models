@@ -307,7 +307,7 @@ def main(_):
     dataset_utils.download_and_uncompress_tarball(
         _UN_OBFUSCATED_NAME_URL, annotation_dir
     )
-    # dataset_utils.download_and_uncompress_tarball(_TRAIN_ASIA_DATA_URL, image_dir)
+    dataset_utils.download_and_uncompress_tarball(_TRAIN_ASIA_DATA_URL, image_dir)
 
     train_output_path = os.path.join(FLAGS.output_dir, "")
     val_output_path = os.path.join(FLAGS.output_dir, "")
