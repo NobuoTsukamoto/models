@@ -107,29 +107,15 @@ def _create_category_index(categories, target_category):
         category_index: a dict containing the same entries as categories, but keyed
         by the 'id' field of each category.
     """
+    label_idx = 0
     category_index = {}
     for cat in categories:
         if cat["supercategory"] == target_category:
+            cat['label_index'] = label_idx
             category_index[cat["id"]] = cat
+            label_idx += 1
+            
     return category_index
-
-
-def _create_label_file(annotaion_file, output_path, target_category):
-    """ Creates label file form annotation_file.
-
-    Args:
-        annotation_file: JSON file.
-        output_dir: path to output to label file.
-        target_category: Taregt super category.
-    """
-    # tf.gfile.GFile(annotations_file, 'r') as fid:
-    # category_data = json.load(fid)
-    # category_names = []
-    # for cat in category_data:
-    #     if cate['supercategory'] == target_category:
-    #        category_names.append('')
-    # category_index = _create_category_index(category_data['categories'], target_category)
-
 
 def create_tf_example(image, annotations, image_dir, category_index):
     """ Converts image and annotations to a tf.Example proto.
@@ -152,7 +138,7 @@ def create_tf_example(image, annotations, image_dir, category_index):
     width = image["width"]
     file_name = image["file_name"]
     category_id = annotations["category_id"]
-    class_id = annotations[category_id]["label_index"]
+    class_id = category_index[category_id]['label_index']
 
     full_path = os.path.join(image_dir, file_name)
     image_data = tf.gfile.GFile(full_path, "rb").read()
@@ -193,10 +179,7 @@ def _create_tf_record_from_coco_annotations(
         images = ground_truth_data["images"]
         target_images = {}
         for image in images:
-            file_name = image["file_name"]
-            full_path = os.path.join(image_dir, file_name)
-            if tf.gfile.Exists(full_path):
-                target_images[image["id"]] = image
+            target_images[image["id"]] = image
 
         # Get annotation index form 'annotation' and categorn index
         annotations_index = {}
@@ -206,18 +189,18 @@ def _create_tf_record_from_coco_annotations(
                 if image_id in target_images:
                     annotations_index[image_id] = annotation
 
-        for idx, image in enumerate(target_images):
+        for idx, image_id in enumerate(annotations_index):
             if idx % 100 == 0:
                 tf.logging.info("On image %d of %d", idx, len(images))
 
-            annotations_list = annotations_index[image["id"]]
+            annotation_list = annotations_index[image_id]
+            image = target_images[image_id]
             tf_example = create_tf_example(
-                image, annotations_list, image_dir, category_index
+                image, annotation_list, image_dir, category_index
             )
             shard_idx = idx % num_shards
             output_tfrecords[shard_idx].write(tf_example.SerializeToString())
         tf.logging.info("Finished writing")
-
 
 def _create_label_from_coco_annotations(
     annotations_file, un_obfuscated_name_file, image_dir, target_category
@@ -233,55 +216,17 @@ def _create_label_from_coco_annotations(
     Returns:
         category index.
     """
-    with tf.gfile.GFile(annotations_file, "r") as fid1, tf.gfile.GFile(
-        un_obfuscated_name_file, "r"
-    ) as fid2:
-        ground_truth_data = json.load(fid1)
-        un_obfuscated_name = json.load(fid2)
+    with tf.gfile.GFile(un_obfuscated_name_file, "r") as fid:
+        un_obfuscated_name = json.load(fid)
 
         # Get category index from 'categories'
         category_index = _create_category_index(
             un_obfuscated_name, target_category
         )
 
-        print('Num of categoies : ', len(category_index))
+        print('Num of labels : ', len(category_index))
 
-        # Extract annotations present in image file.
-        images = ground_truth_data["images"]
-        target_images = {}
-        for image in images:
-            file_name = image["file_name"]
-            full_path = os.path.join(image_dir, file_name)
-            if tf.gfile.Exists(full_path):
-                target_images[image["id"]] = image
-
-        print('Num of target images : ', len(target_images))
-
-        # Get annotation index form 'annotation' and categorn index
-        annotations_index = {}
-        for annotation in ground_truth_data["annotations"]:
-            if annotation["category_id"] in category_index:
-                image_id = annotation["image_id"]
-                if image_id in target_images:
-                    annotations_index[image_id] = annotation
-
-        print('Num of annotations index : ', len(annotations_index))
-
-        # Create Labels.
-        labels = {}
-        idx = 0
-        for annotation in annotations_index:
-            if annotations_index["category_id"] not in labels:
-                category_id = annotations_index["category_id"]
-                cat = category_index[category_id]
-                cat['label_index'] = idx
-                labels[category_id] = cat
-                idx += 1
-
-        print('Num of labels : ', len(labels))
-
-    return labels
-
+    return category_index
 
 def main(_):
     if not tf.gfile.IsDirectory(FLAGS.output_dir):
@@ -307,10 +252,10 @@ def main(_):
     dataset_utils.download_and_uncompress_tarball(
         _UN_OBFUSCATED_NAME_URL, annotation_dir
     )
-    dataset_utils.download_and_uncompress_tarball(_TRAIN_ASIA_DATA_URL, image_dir)
+    #dataset_utils.download_and_uncompress_tarball(_TRAIN_ASIA_DATA_URL, image_dir)
 
-    train_output_path = os.path.join(FLAGS.output_dir, "")
-    val_output_path = os.path.join(FLAGS.output_dir, "")
+    train_output_path = os.path.join(FLAGS.output_dir, "inat_{}_train.tfrecord".format(FLAGS.super_category))
+    val_output_path = os.path.join(FLAGS.output_dir, "inat_{}_val.tfrecord".format(FLAGS.super_category))
     train_annotation_path = os.path.join(annotation_dir, "train2018.json")
     val_annotation_path = os.path.join(annotation_dir, "val2018.json")
     un_obfuscated_name_file = os.path.join(annotation_dir, "categories.json")
@@ -323,8 +268,8 @@ def main(_):
 
     # Create TF-Record train and test:
     _create_tf_record_from_coco_annotations(
-        train_annotation_path,
-        category_index,
+         train_annotation_path,
+         category_index,
         image_dir,
         train_output_path,
         FLAGS.super_category,
@@ -340,13 +285,12 @@ def main(_):
     )
 
     # Finally, write the labels file:
-    class_names = []
-    category_index = sorted(category_index, key=lambda x: x["label_index"])
-    for category in category_index:
-        class_names.append(category["name"])
-    labels_to_class_names = dict(zip(range(len(class_names)), class_names))
-    dataset_utils.write_label_file(labels_to_class_names, FLAGS.output_dir)
+    labels = {}
+    for idx in category_index:
+        cat = category_index[idx]
+        labels[cat['label_index']] = cat['name']
 
+    dataset_utils.write_label_file(labels, FLAGS.output_dir)
 
 if __name__ == "__main__":
     tf.app.run()

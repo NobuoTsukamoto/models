@@ -23,13 +23,15 @@ from datasets import flowers
 from datasets import imagenet
 from datasets import mnist
 from datasets import dogcat
+from datasets import inat_aves
 
 datasets_map = {
     'cifar10': cifar10,
     'flowers': flowers,
     'imagenet': imagenet,
     'mnist': mnist,
-    'dogcat': dogcat
+    'dogcat': dogcat,
+    'inat_aves': inat_aves
 }
 
 
