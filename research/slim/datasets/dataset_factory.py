@@ -22,16 +22,24 @@ from datasets import cifar10
 from datasets import flowers
 from datasets import imagenet
 from datasets import mnist
+<<<<<<< HEAD
 from datasets import dogcat
 from datasets import inat_aves
+=======
+from datasets import visualwakewords
+>>>>>>> master
 
 datasets_map = {
     'cifar10': cifar10,
     'flowers': flowers,
     'imagenet': imagenet,
     'mnist': mnist,
+<<<<<<< HEAD
     'dogcat': dogcat,
     'inat_aves': inat_aves
+=======
+    'visualwakewords': visualwakewords,
+>>>>>>> master
 }
 
 

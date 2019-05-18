@@ -174,7 +174,7 @@ def conv_block(input_tensor,
   return x
 
 
-def resnet50(num_classes, dtype='float32'):
+def resnet50(num_classes, dtype='float32', batch_size=None):
   # TODO(tfboyd): add training argument, just lik resnet56.
   """Instantiates the ResNet50 architecture.
 
@@ -185,7 +185,8 @@ def resnet50(num_classes, dtype='float32'):
       A Keras model instance.
   """
   input_shape = (224, 224, 3)
-  img_input = layers.Input(shape=input_shape, dtype=dtype)
+  img_input = layers.Input(shape=input_shape, dtype=dtype,
+                           batch_size=batch_size)
 
   if backend.image_data_format() == 'channels_first':
     x = layers.Lambda(lambda x: backend.permute_dimensions(x, (0, 3, 1, 2)),
@@ -207,8 +208,7 @@ def resnet50(num_classes, dtype='float32'):
                                 epsilon=BATCH_NORM_EPSILON,
                                 name='bn_conv1')(x)
   x = layers.Activation('relu')(x)
-  x = layers.ZeroPadding2D(padding=(1, 1), name='pool1_pad')(x)
-  x = layers.MaxPooling2D((3, 3), strides=(2, 2))(x)
+  x = layers.MaxPooling2D((3, 3), strides=(2, 2), padding='same')(x)
 
   x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1))
   x = identity_block(x, 3, [64, 64, 256], stage=2, block='b')

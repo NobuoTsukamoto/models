@@ -20,12 +20,12 @@ from __future__ import division
 from __future__ import print_function
 
 import json
-import logging
 import os
 
 # pylint: disable=g-bad-import-order
 import numpy as np
 from absl import flags
+from absl import logging
 import tensorflow as tf
 # pylint: enable=g-bad-import-order
 
@@ -104,21 +104,11 @@ def parse_flags(flags_obj):
       "epsilon": flags_obj.epsilon,
       "match_mlperf": flags_obj.ml_perf,
       "use_xla_for_gpu": flags_obj.use_xla_for_gpu,
+      "clone_model_in_keras_dist_strat":
+          flags_obj.clone_model_in_keras_dist_strat,
       "epochs_between_evals": FLAGS.epochs_between_evals,
       "turn_off_distribution_strategy": FLAGS.turn_off_distribution_strategy,
   }
-
-
-def get_optimizer(params):
-  optimizer = tf.train.AdamOptimizer(
-      learning_rate=params["learning_rate"],
-      beta1=params["beta1"],
-      beta2=params["beta2"],
-      epsilon=params["epsilon"])
-  if params["use_tpu"]:
-    optimizer = tf.contrib.tpu.CrossShardOptimizer(optimizer)
-
-  return optimizer
 
 
 def get_distribution_strategy(params):
@@ -132,14 +122,14 @@ def get_distribution_strategy(params):
                  "oauth2client.transport"]:
       logging.getLogger(name).setLevel(logging.ERROR)
 
-    tpu_cluster_resolver = tf.contrib.cluster_resolver.TPUClusterResolver(
+    tpu_cluster_resolver = tf.distribute.cluster_resolver.TPUClusterResolver(
         tpu=params["tpu"],
         zone=params["tpu_zone"],
         project=params["tpu_gcp_project"],
         coordinator_name="coordinator"
     )
 
-    tf.logging.info("Issuing reset command to TPU to ensure a clean state.")
+    logging.info("Issuing reset command to TPU to ensure a clean state.")
     tf.Session.reset(tpu_cluster_resolver.get_master())
 
     # Estimator looks at the master it connects to for MonitoredTrainingSession
@@ -153,7 +143,7 @@ def get_distribution_strategy(params):
     }
     os.environ['TF_CONFIG'] = json.dumps(tf_config_env)
 
-    distribution = tf.contrib.distribute.TPUStrategy(
+    distribution = tf.distribute.experimental.TPUStrategy(
         tpu_cluster_resolver, steps_per_run=100)
 
   else:
@@ -323,6 +313,13 @@ def define_ncf_flags():
   @flags.multi_flags_validator(["use_xla_for_gpu", "tpu"], message=xla_message)
   def xla_validator(flag_dict):
     return not flag_dict["use_xla_for_gpu"] or not flag_dict["tpu"]
+
+  flags.DEFINE_bool(
+      name="clone_model_in_keras_dist_strat",
+      default=True,
+      help=flags_core.help_wrap(
+          'If False, then the experimental code path is used that doesn\'t '
+          "clone models for distribution."))
 
 
 def convert_to_softmax_logits(logits):
