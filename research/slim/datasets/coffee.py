@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Provides data for the caffee dataset.
+"""Provides data for the coffee dataset.
 
 """
 
@@ -27,9 +27,9 @@ from datasets import dataset_utils
 
 slim = tf.contrib.slim
 
-_FILE_PATTERN = 'caffee_%s_*.tfrecord'
+_FILE_PATTERN = 'coffee_%s_*.tfrecord'
 
-SPLITS_TO_SIZES = {'train': 2548, 'val': 725, 'test':360}
+SPLITS_TO_SIZES = {'train': 4852, 'val': 505}
 
 _NUM_CLASSES = 5
 

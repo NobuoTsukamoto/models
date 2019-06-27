@@ -23,7 +23,7 @@ from datasets import flowers
 from datasets import imagenet
 from datasets import mnist
 from datasets import dogcat
-from datasets import caffee
+from datasets import coffee
 from datasets import inat_aves
 from datasets import visualwakewords
 
@@ -33,7 +33,7 @@ datasets_map = {
     'imagenet': imagenet,
     'mnist': mnist,
     'dogcat': dogcat,
-    'caffee': caffee,
+    'coffee': coffee,
     'inat_aves': inat_aves,
     'visualwakewords': visualwakewords,
 }
