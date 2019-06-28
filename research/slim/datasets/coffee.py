@@ -31,7 +31,7 @@ _FILE_PATTERN = 'coffee_%s_*.tfrecord'
 
 SPLITS_TO_SIZES = {'train': 4852, 'val': 505}
 
-_NUM_CLASSES = 5
+_NUM_CLASSES = 3
 
 _ITEMS_TO_DESCRIPTIONS = {
     'image': 'A color image of varying size.',
