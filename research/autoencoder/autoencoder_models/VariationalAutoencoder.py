@@ -26,6 +26,9 @@ class VariationalAutoencoder(object):
                                            - tf.square(self.z_mean)
                                            - tf.exp(self.z_log_sigma_sq), 1)
         self.cost = tf.reduce_mean(reconstr_loss + latent_loss)
+
+        tf.contrib.quantize.create_training_graph(input_graph=tf.get_default_graph(), quant_delay=10)
+
         self.optimizer = optimizer.minimize(self.cost)
 
         init = tf.global_variables_initializer()
@@ -67,4 +70,8 @@ class VariationalAutoencoder(object):
 
     def getBiases(self):
         return self.sess.run(self.weights['b1'])
+
+    def writeSummary(self, log_dir):
+        summary_writer = tf.summary.FileWriter(log_dir, self.sess.graph)
+
 

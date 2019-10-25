@@ -18,6 +18,8 @@ import functools
 
 import tensorflow as tf
 
+from se_net import se_block
+
 slim = tf.contrib.slim
 
 
@@ -178,6 +180,8 @@ def expanded_conv(input_tensor,
                   endpoints=None,
                   use_explicit_padding=False,
                   padding='SAME',
+                  add_se_block=False,
+                  activation_fn=None,
                   scope=None):
   """Depthwise Convolution Block with expansion.
 
@@ -220,6 +224,7 @@ def expanded_conv(input_tensor,
       inputs so that the output dimensions are the same as if 'SAME' padding
       were used.
     padding: Padding type to use if `use_explicit_padding` is not set.
+    se_block: whether to include SE-block.
     scope: optional scope.
 
   Returns:
@@ -257,7 +262,7 @@ def expanded_conv(input_tensor,
     if depthwise_location == 'input':
       if use_explicit_padding:
         net = _fixed_padding(net, kernel_size, rate)
-      net = depthwise_func(net, activation_fn=None)
+      net = depthwise_func(net, activation_fn=activation_fn)
 
     if callable(expansion_size):
       inner_size = expansion_size(num_inputs=prev_depth)
@@ -272,7 +277,8 @@ def expanded_conv(input_tensor,
           scope='expand',
           divisible_by=split_divisible_by,
           stride=1,
-          normalizer_fn=normalizer_fn)
+          normalizer_fn=normalizer_fn,
+          activation_fn=activation_fn)
       net = tf.identity(net, 'expansion_output')
     if endpoints is not None:
       endpoints['expansion_output'] = net
@@ -304,6 +310,13 @@ def expanded_conv(input_tensor,
       if use_explicit_padding:
         net = _fixed_padding(net, kernel_size, rate)
       net = depthwise_func(net, activation_fn=None)
+
+    # add se-block
+    if callable(se_block):
+      if add_se_block == True:
+        net = se_block(net, r=16)
+        if endpoints is not None:
+          endpoints['se_block_output'] = net
 
     if callable(residual):  # custom residual
       net = residual(input_tensor=input_tensor, output_tensor=net)
@@ -360,3 +373,4 @@ def split_conv(input_tensor,
     n = tf.identity(n, scope + '_output')
     outs.append(n)
   return tf.concat(outs, 3, name=scope + '_concat')
+
