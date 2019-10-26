@@ -210,3 +210,31 @@ class SSDMobileNetV3SmallFeatureExtractor(_SSDMobileNetV3FeatureExtractorBase):
         use_depthwise=use_depthwise,
         override_base_feature_extractor_hyperparams=override_base_feature_extractor_hyperparams
     )
+
+
+class SSDMobileNetV3SmallMinimalisticFeatureExtractor(_SSDMobileNetV3FeatureExtractorBase):
+  """Mobilenet V3-Small Minimalistic feature extractor."""
+
+  def __init__(self,
+               is_training,
+               depth_multiplier,
+               min_depth,
+               pad_to_multiple,
+               conv_hyperparams_fn,
+               reuse_weights=None,
+               use_explicit_padding=False,
+               use_depthwise=False,
+               override_base_feature_extractor_hyperparams=False):
+    super(SSDMobileNetV3SmallMinimalisticFeatureExtractor, self).__init__(
+        conv_defs=mobilenet_v3.V3_SMALL_MINIMALISTIC_DETECTION,
+        from_layer=['layer_10/expansion_output', 'layer_13'],
+        is_training=is_training,
+        depth_multiplier=depth_multiplier,
+        min_depth=min_depth,
+        pad_to_multiple=pad_to_multiple,
+        conv_hyperparams_fn=conv_hyperparams_fn,
+        reuse_weights=reuse_weights,
+        use_explicit_padding=use_explicit_padding,
+        use_depthwise=use_depthwise,
+        override_base_feature_extractor_hyperparams=override_base_feature_extractor_hyperparams
+    )
