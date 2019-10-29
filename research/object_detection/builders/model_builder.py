@@ -55,6 +55,7 @@ from object_detection.models.ssd_mobilenet_v2_fpn_keras_feature_extractor import
 from object_detection.models.ssd_mobilenet_v2_keras_feature_extractor import SSDMobileNetV2KerasFeatureExtractor
 from object_detection.models.ssd_mobilenet_v3_feature_extractor import SSDMobileNetV3LargeFeatureExtractor
 from object_detection.models.ssd_mobilenet_v3_feature_extractor import SSDMobileNetV3SmallFeatureExtractor
+from object_detection.models.ssd_mobilenet_v3_feature_extractor import SSDMobileNetV3SmallLargeisticFeatureExtractor
 from object_detection.models.ssd_mobilenet_v3_feature_extractor import SSDMobileNetV3SmallMinimalisticFeatureExtractor
 from object_detection.models.ssd_pnasnet_feature_extractor import SSDPNASNetFeatureExtractor
 from object_detection.predictors import rfcn_box_predictor
@@ -74,6 +75,7 @@ SSD_FEATURE_EXTRACTOR_CLASS_MAP = {
     'ssd_mobilenet_v2_fpn': SSDMobileNetV2FpnFeatureExtractor,
     'ssd_mobilenet_v3_large': SSDMobileNetV3LargeFeatureExtractor,
     'ssd_mobilenet_v3_small': SSDMobileNetV3SmallFeatureExtractor,
+    'ssd_mobilenet_v3_large_minimalistic': SSDMobileNetV3LargeMinimalisticFeatureExtractor,
     'ssd_mobilenet_v3_small_minimalistic': SSDMobileNetV3SmallMinimalisticFeatureExtractor,
     'ssd_resnet50_v1_fpn': ssd_resnet_v1_fpn.SSDResnet50V1FpnFeatureExtractor,
     'ssd_resnet101_v1_fpn': ssd_resnet_v1_fpn.SSDResnet101V1FpnFeatureExtractor,

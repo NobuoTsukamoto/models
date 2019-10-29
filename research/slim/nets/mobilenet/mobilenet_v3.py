@@ -319,7 +319,9 @@ def _reduce_consecutive_layers(conv_defs, start_id, end_id, multiplier=0.5):
 
 V3_LARGE_DETECTION = _reduce_consecutive_layers(V3_LARGE, 13, 16)
 V3_SMALL_DETECTION = _reduce_consecutive_layers(V3_SMALL, 9, 12)
+V3_LARGE_MINIMALISTIC_DETECTION = _reduce_consecutive_layers(V3_LARGE_MINIMALISTIC, 13, 16)
 V3_SMALL_MINIMALISTIC_DETECTION = _reduce_consecutive_layers(V3_SMALL_MINIMALISTIC, 9, 12)
 
 __all__ = ['training_scope', 'mobilenet', 'V3_LARGE', 'V3_SMALL', 'large',
-           'small', 'V3_LARGE_DETECTION', 'V3_SMALL_DETECTION', 'V3_SMALL_MINIMALISTIC_DETECTION']
+           'small', 'V3_LARGE_DETECTION', 'V3_SMALL_DETECTION',
+           'V3_LARGE_MINIMALISTIC_DETECTION','V3_SMALL_MINIMALISTIC_DETECTION']
