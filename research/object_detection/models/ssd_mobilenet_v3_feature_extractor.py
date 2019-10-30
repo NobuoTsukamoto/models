@@ -226,7 +226,7 @@ class SSDMobileNetV3LargeMinimalisticFeatureExtractor(_SSDMobileNetV3FeatureExtr
                use_depthwise=False,
                override_base_feature_extractor_hyperparams=False):
     super(SSDMobileNetV3LargeMinimalisticFeatureExtractor, self).__init__(
-        conv_defs=mobilenet_v3.V3_LARGE_MINIMALISTIC__DETECTION,
+        conv_defs=mobilenet_v3.V3_LARGE_MINIMALISTIC_DETECTION,
         from_layer=['layer_14/expansion_output', 'layer_17'],
         is_training=is_training,
         depth_multiplier=depth_multiplier,
