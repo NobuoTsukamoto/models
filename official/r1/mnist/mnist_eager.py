@@ -36,8 +36,8 @@ import tensorflow as tf
 from tensorflow.python import eager as tfe
 # pylint: enable=g-bad-import-order
 
-from official.mnist import dataset as mnist_dataset
-from official.mnist import mnist
+from official.r1.mnist import dataset as mnist_dataset
+from official.r1.mnist import mnist
 from official.utils.flags import core as flags_core
 from official.utils.misc import model_helpers
 

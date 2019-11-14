@@ -22,7 +22,7 @@ from absl import flags
 from six.moves import range
 import tensorflow as tf  # pylint: disable=g-bad-import-order
 
-from official.mnist import dataset
+from official.r1.mnist import dataset
 from official.utils.flags import core as flags_core
 from official.utils.logs import hooks_helper
 from official.utils.misc import distribution_utils

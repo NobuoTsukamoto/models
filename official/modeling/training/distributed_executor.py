@@ -22,6 +22,7 @@ from __future__ import print_function
 import json
 import os
 
+import numpy as np
 from absl import flags
 from absl import logging
 import tensorflow as tf
@@ -131,13 +132,6 @@ def hparam_flags_dict():
   }
 
 
-def primary_cpu_task(use_remote_tpu=False):
-  """Returns primary CPU task to which input pipeline Ops are put."""
-
-  # Remote Eager Borg job configures the TPU worker with job name 'worker'.
-  return '/job:worker' if use_remote_tpu else ''
-
-
 def _save_checkpoint(checkpoint, model_dir, checkpoint_prefix):
   """Saves model to model_dir with provided checkpoint prefix."""
 
@@ -204,7 +198,6 @@ class DistributedExecutor(object):
     metric_fn: metric function. Signature: () -> tf.keras.metrics.Metric.
     is_multi_host: Set to True when using multi hosts for training, like multi
       worker GPU or TPU pod (slice). Otherwise, False.
-    use_remote_tpu: If True, run on remote TPU mode.
   """
 
   def __init__(self,
@@ -212,14 +205,12 @@ class DistributedExecutor(object):
                params,
                model_fn,
                loss_fn,
-               is_multi_host=False,
-               use_remote_tpu=False):
+               is_multi_host=False):
 
     self._params = params
     self._model_fn = model_fn
     self._loss_fn = loss_fn
     self._strategy = strategy
-    self._use_remote_tpu = use_remote_tpu
     self._checkpoint_name = 'ctl_step_{step}.ckpt'
     self._is_multi_host = is_multi_host
 
@@ -436,14 +427,16 @@ class DistributedExecutor(object):
       if not custom_callbacks:
         return
       for callback in custom_callbacks:
-        callback.on_batch_begin(batch)
+        if callback:
+          callback.on_batch_begin(batch)
 
     def _run_callbacks_on_batch_end(batch):
       """Runs custom callbacks at the end of every step."""
       if not custom_callbacks:
         return
       for callback in custom_callbacks:
-        callback.on_batch_end(batch)
+        if callback:
+          callback.on_batch_end(batch)
 
     if save_config:
       self._save_config(model_dir)
@@ -452,7 +445,6 @@ class DistributedExecutor(object):
       save_freq = FLAGS.save_checkpoint_freq
     else:
       save_freq = iterations_per_loop
-    last_save_checkpoint_step = 0
 
     params = self._params
     strategy = self._strategy
@@ -507,6 +499,7 @@ class DistributedExecutor(object):
       test_step = self._create_test_step(strategy, model, metric=eval_metric)
 
     logging.info('Training started')
+    last_save_checkpoint_step = current_step
     while current_step < total_steps:
 
       num_steps = _steps_to_run(current_step, total_steps, iterations_per_loop)
@@ -520,6 +513,8 @@ class DistributedExecutor(object):
                                          train_loss)
       if not isinstance(train_loss, dict):
         train_loss = {'total_loss': train_loss}
+      if np.isnan(train_loss['total_loss']):
+        raise ValueError('total loss is NaN.')
 
       if train_metric:
         train_metric_result = train_metric.result()
@@ -569,8 +564,9 @@ class DistributedExecutor(object):
         train_metric.reset_states()
 
     # Reaches the end of training and saves the last checkpoint.
-    _save_checkpoint(checkpoint, model_dir,
-                     checkpoint_name.format(step=current_step))
+    if last_save_checkpoint_step < total_steps:
+      _save_checkpoint(checkpoint, model_dir,
+                       checkpoint_name.format(step=current_step))
 
     if test_step:
       logging.info('Running final evaluation after training is complete.')
@@ -785,7 +781,7 @@ class ExecutorBuilder(object):
     """Builds tf.distribute.Strategy instance.
 
     Args:
-      strategy_type: string. One of 'tpu', 'mirrored', 'multi_worker_mirrored'.
+      strategy_type: string. One of 'tpu', 'one_device_gpu', 'mirrored', 'multi_worker_mirrored'.
 
     Returns:
       An tf.distribute.Strategy object. Returns None if strategy_type is None.
@@ -795,6 +791,8 @@ class ExecutorBuilder(object):
 
     if strategy_type == 'tpu':
       return self._build_tpu_strategy()
+    elif strategy_type == 'one_device_gpu':
+      return tf.distribute.OneDeviceStrategy("device:GPU:0")
     elif strategy_type == 'mirrored':
       return self._build_mirrored_strategy()
     elif strategy_type == 'multi_worker_mirrored':
@@ -866,11 +864,6 @@ class ExecutorBuilder(object):
       raise ValueError('`strategy` should not be None. You need to specify '
                        '`strategy_type` in the builder contructor or directly '
                        'set the `strategy` property of the builder.')
-    if 'use_remote_tpu' not in kwargs:
-      use_remote_tpu = (
-          isinstance(self._strategy, tf.distribute.experimental.TPUStrategy) and
-          bool(self._strategy_config.tpu))
-      kwargs['use_remote_tpu'] = use_remote_tpu
     return class_ctor(
         strategy=self._strategy,
         params=params,

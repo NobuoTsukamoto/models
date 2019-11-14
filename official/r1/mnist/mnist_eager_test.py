@@ -22,8 +22,8 @@ import unittest
 import tensorflow as tf  # pylint: disable=g-bad-import-order
 from tensorflow.python import eager as tfe  # pylint: disable=g-bad-import-order
 
-from official.mnist import mnist
-from official.mnist import mnist_eager
+from official.r1.mnist import mnist
+from official.r1.mnist import mnist_eager
 from official.utils.misc import keras_utils
 
 

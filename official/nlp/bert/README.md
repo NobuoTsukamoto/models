@@ -3,7 +3,7 @@
 The academic paper which describes BERT in detail and provides full results on a
 number of tasks can be found here: https://arxiv.org/abs/1810.04805.
 
-This repository contains TensorFlow 2.0 implementation for BERT.
+This repository contains TensorFlow 2 implementation for BERT.
 
 N.B. This repository is under active development. Though we intend
 to keep the top-level BERT Keras model interface stable, expect continued
@@ -32,6 +32,11 @@ are going to release new pre-trained checkpoints soon.
 We provide checkpoints that are converted from [google-research/bert](https://github.com/google-research/bert),
 in order to keep consistent with BERT paper.
 
+The stable model checkpoints work with [v2.0 release](https://github.com/tensorflow/models/releases/tag/v2.0).
+
+**Note: these checkpoints are not compatible with the current master
+[run_classifier.py](run_classifier.py) example.**
+
 *   **[`BERT-Large, Uncased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_uncased_L-24_H-1024_A-16.tar.gz)**:
     24-layer, 1024-hidden, 16-heads, 340M parameters
 *   **[`BERT-Large, Cased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_cased_L-24_H-1024_A-16.tar.gz)**:
@@ -45,16 +50,32 @@ in order to keep consistent with BERT paper.
 *   **[`BERT-Large, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-24_H-1024_A-16.tar.gz)**:
     24-layer, 1024-hidden, 16-heads, 340M parameters
 
-We recommend to host checkpoints on Google Cloud storage buckets when you use
-Cloud GPU/TPU. For example, in the following tutorial, we use:
+**Note: We are in the middle of a transition stage to switch BERT implementation
+to use Keras functional-style networks in [nlp/modeling](../modeling).
+The checkpoint above will be deleted once transition is done.**
 
-```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
-```
+The new checkpoints work with [run_classifier.py](run_classifier.py) example
+are:
+
+*   **[`BERT-Large, Uncased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/wwm_uncased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Large, Cased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/wwm_cased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Base, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/uncased_L-12_H-768_A-12.tar.gz)**:
+    12-layer, 768-hidden, 12-heads, 110M parameters
+*   **[`BERT-Large, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Base, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/cased_L-12_H-768_A-12.tar.gz)**:
+    12-layer, 768-hidden, 12-heads , 110M parameters
+*   **[`BERT-Large, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/cased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+
+We recommend to host checkpoints on Google Cloud storage buckets when you use
+Cloud GPU/TPU.
 
 ### Restoring from Checkpoints
 
-`tf.train.Checkpoint` is used to manage model checkpoints in TF 2.0. To restore
+`tf.train.Checkpoint` is used to manage model checkpoints in TF 2. To restore
 weights from provided pre-trained checkpoints, you can use the following code:
 
 ```python
@@ -76,7 +97,7 @@ export PYTHONPATH="$PYTHONPATH:/path/to/models"
 Install `tf-nightly` to get latest updates:
 
 ```shell
-pip install tf-nightly-gpu-2.0-preview
+pip install tf-nightly-gpu
 ```
 
 With TPU, GPU support is not necessary. First, you need to create a `tf-nigthly`
@@ -86,10 +107,10 @@ TPU with [cptu tool](https://github.com/tensorflow/tpu/tree/master/tools/ctpu):
 ctpu up -name <instance name> --tf-version=”nightly”
 ```
 
-Second, you need to install TF 2.0 `tf-night` on your VM:
+Second, you need to install TF 2 `tf-night` on your VM:
 
 ```shell
-pip install tf-nightly-2.0-preview
+pip install tf-nightly
 ```
 
 Warning: More details TPU-specific set-up instructions and tutorial should come
@@ -101,9 +122,10 @@ supported by Google Cloud TPU team yet.
 ### Pre-training
 
 There is no change to generate pre-training data. Please use the script
-[`create_pretraining_data.py`](https://github.com/google-research/bert/blob/master/create_pretraining_data.py)
-inside [BERT research repo](https://github.com/google-research/bert) to get
-processed pre-training data.
+[`create_pretraining_data.py`](create_pretraining_data.py)
+which is essentially branched from [BERT research repo](https://github.com/google-research/bert)
+to get processed pre-training data and it adapts to TF2 symbols and python3
+compatibility.
 
 
 ### Fine-tuning
@@ -175,7 +197,7 @@ The unzipped pre-trained model files can also be found in the Google Cloud
 Storage folder `gs://cloud-tpu-checkpoints/bert/tf_20`. For example:
 
 ```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export MODEL_DIR=gs://some_bucket/my_output_dir
 ```
 

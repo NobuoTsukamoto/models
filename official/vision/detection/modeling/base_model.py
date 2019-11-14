@@ -85,7 +85,6 @@ class Model(object):
 
   def __init__(self, params):
     self._use_bfloat16 = params.architecture.use_bfloat16
-    assert not self._use_bfloat16, 'bfloat16 is not supported in Keras yet.'
 
     # Optimization.
     self._optimizer_fn = OptimizerFactory(params.train.optimizer)
@@ -139,7 +138,7 @@ class Model(object):
     return l2_weight_decay * tf.add_n([
         tf.nn.l2_loss(v)
         for v in self._keras_model.trainable_variables
-        if 'batch_normalization' not in v.name
+        if 'batch_normalization' not in v.name and 'bias' not in v.name
     ])
 
   def make_restore_checkpoint_fn(self):

@@ -22,7 +22,7 @@ import unittest
 
 import tensorflow as tf  # pylint: disable=g-bad-import-order
 
-from official.mnist import mnist
+from official.r1.mnist import mnist
 from official.utils.misc import keras_utils
 
 BATCH_SIZE = 100
