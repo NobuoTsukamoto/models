@@ -220,7 +220,7 @@ class SSDMobileNetV3SmallFeatureExtractor(SSDMobileNetV3FeatureExtractorBase):
     )
 
 
-class SSDMobileNetV3LargeMinimalisticFeatureExtractor(_SSDMobileNetV3FeatureExtractorBase):
+class SSDMobileNetV3LargeMinimalisticFeatureExtractor(SSDMobileNetV3FeatureExtractorBase):
   """Mobilenet V3-Large Minimalistic feature extractor."""
 
   def __init__(self,
@@ -248,7 +248,7 @@ class SSDMobileNetV3LargeMinimalisticFeatureExtractor(_SSDMobileNetV3FeatureExtr
     )
 
 
-class SSDMobileNetV3SmallMinimalisticFeatureExtractor(_SSDMobileNetV3FeatureExtractorBase):
+class SSDMobileNetV3SmallMinimalisticFeatureExtractor(SSDMobileNetV3FeatureExtractorBase):
   """Mobilenet V3-Small Minimalistic feature extractor."""
 
   def __init__(self,
