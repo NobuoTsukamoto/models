@@ -1,0 +1,50 @@
+item {
+  id: 1
+  name: 'Car'
+}
+
+item {
+  id: 2
+  name: 'Bus'
+}
+
+item {
+  id: 3
+  name: 'Truck'
+}
+
+item {
+  id: 4
+  name: 'SVehicle'
+}
+
+item {
+  id: 5
+  name: 'Pedestrian'
+}
+
+item {
+  id: 6
+  name: 'Motorbike'
+}
+
+item {
+  id: 7
+  name: 'Bicycle'
+}
+
+item {
+  id: 8
+  name: 'Train'
+}
+
+item {
+  id: 9
+  name: 'Signal'
+}
+
+item {
+  id: 10
+  name: 'Signs'
+}
+
