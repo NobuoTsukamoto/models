@@ -41,7 +41,7 @@ flags = tf.app.flags
 flags.DEFINE_string('data_dir', '', 'Root directory to raw pet dataset.')
 flags.DEFINE_string('image_dir', '', 'Root directory to raw pet dataset.')
 flags.DEFINE_string('output_dir', '', 'Path to directory to output TFRecords.')
-flags.DEFINE_string('label_map_path', 'data/pet_label_map.pbtxt',
+flags.DEFINE_string('label_map_path', 'data/ai_edge_label_map.pbtxt',
                     'Path to label map proto')
 flags.DEFINE_integer('num_shards', 10, 'Number of TFRecord shards')
 flags.DEFINE_float('prop', 0.2, 'Number of TFRecord shards')
