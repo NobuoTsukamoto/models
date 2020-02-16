@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import tempfile
+import os
 
 import tensorflow.compat.v2 as tf
 
@@ -53,17 +54,21 @@ class CtlImagenetTest(tf.test.TestCase):
   def setUp(self):
     super(CtlImagenetTest, self).setUp()
     imagenet_preprocessing.NUM_IMAGES['validation'] = 4
+    self.policy = \
+        tf.compat.v2.keras.mixed_precision.experimental.global_policy()
 
   def tearDown(self):
     super(CtlImagenetTest, self).tearDown()
     tf.io.gfile.rmtree(self.get_temp_dir())
+    tf.compat.v2.keras.mixed_precision.experimental.set_policy(self.policy)
 
   def test_end_to_end_no_dist_strat(self):
     """Test Keras model with 1 GPU, no distribution strategy."""
 
+    model_dir = os.path.join(self.get_temp_dir(), 'ctl_imagenet_no_dist_strat')
     extra_flags = [
         '-distribution_strategy', 'off',
-        '-model_dir', 'ctl_imagenet_no_dist_strat',
+        '-model_dir', model_dir,
         '-data_format', 'channels_last',
     ]
     extra_flags = extra_flags + self._extra_flags
@@ -80,10 +85,11 @@ class CtlImagenetTest(tf.test.TestCase):
     if context.num_gpus() < 2:
       num_gpus = '0'
 
+    model_dir = os.path.join(self.get_temp_dir(), 'ctl_imagenet_2_gpu')
     extra_flags = [
         '-num_gpus', num_gpus,
-        '-distribution_strategy', 'default',
-        '-model_dir', 'ctl_imagenet_2_gpu',
+        '-distribution_strategy', 'mirrored',
+        '-model_dir', model_dir,
         '-data_format', 'channels_last',
     ]
     extra_flags = extra_flags + self._extra_flags

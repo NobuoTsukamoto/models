@@ -3,11 +3,7 @@
 The academic paper which describes BERT in detail and provides full results on a
 number of tasks can be found here: https://arxiv.org/abs/1810.04805.
 
-This repository contains TensorFlow 2 implementation for BERT.
-
-N.B. This repository is under active development. Though we intend
-to keep the top-level BERT Keras model interface stable, expect continued
-changes to the training code, utility function interface and flags.
+This repository contains TensorFlow 2.x implementation for BERT.
 
 ## Contents
   * [Contents](#contents)
@@ -32,30 +28,9 @@ are going to release new pre-trained checkpoints soon.
 We provide checkpoints that are converted from [google-research/bert](https://github.com/google-research/bert),
 in order to keep consistent with BERT paper.
 
-The stable model checkpoints work with [v2.0 release](https://github.com/tensorflow/models/releases/tag/v2.0).
-
-**Note: these checkpoints are not compatible with the current master
-[run_classifier.py](run_classifier.py) example.**
-
-*   **[`BERT-Large, Uncased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_uncased_L-24_H-1024_A-16.tar.gz)**:
-    24-layer, 1024-hidden, 16-heads, 340M parameters
-*   **[`BERT-Large, Cased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_cased_L-24_H-1024_A-16.tar.gz)**:
-    24-layer, 1024-hidden, 16-heads, 340M parameters
-*   **[`BERT-Base, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/uncased_L-12_H-768_A-12.tar.gz)**:
-    12-layer, 768-hidden, 12-heads, 110M parameters
-*   **[`BERT-Large, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16.tar.gz)**:
-    24-layer, 1024-hidden, 16-heads, 340M parameters
-*   **[`BERT-Base, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-12_H-768_A-12.tar.gz)**:
-    12-layer, 768-hidden, 12-heads , 110M parameters
-*   **[`BERT-Large, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-24_H-1024_A-16.tar.gz)**:
-    24-layer, 1024-hidden, 16-heads, 340M parameters
-
-**Note: We are in the middle of a transition stage to switch BERT implementation
+**Note: We have switched BERT implementation
 to use Keras functional-style networks in [nlp/modeling](../modeling).
-The checkpoint above will be deleted once transition is done.**
-
-The new checkpoints work with [run_classifier.py](run_classifier.py) example
-are:
+The new checkpoints are:**
 
 *   **[`BERT-Large, Uncased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/wwm_uncased_L-24_H-1024_A-16.tar.gz)**:
     24-layer, 1024-hidden, 16-heads, 340M parameters
@@ -68,6 +43,23 @@ are:
 *   **[`BERT-Base, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/cased_L-12_H-768_A-12.tar.gz)**:
     12-layer, 768-hidden, 12-heads , 110M parameters
 *   **[`BERT-Large, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/keras_bert/cased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+
+Here are the stable model checkpoints work with [v2.0 release](https://github.com/tensorflow/models/releases/tag/v2.0).
+
+**Note: these checkpoints are not compatible with the current master examples.**
+
+*   **[`BERT-Large, Uncased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_uncased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Large, Cased (Whole Word Masking)`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/wwm_cased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Base, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/uncased_L-12_H-768_A-12.tar.gz)**:
+    12-layer, 768-hidden, 12-heads, 110M parameters
+*   **[`BERT-Large, Uncased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16.tar.gz)**:
+    24-layer, 1024-hidden, 16-heads, 340M parameters
+*   **[`BERT-Base, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-12_H-768_A-12.tar.gz)**:
+    12-layer, 768-hidden, 12-heads , 110M parameters
+*   **[`BERT-Large, Cased`](https://storage.googleapis.com/cloud-tpu-checkpoints/bert/tf_20/cased_L-24_H-1024_A-16.tar.gz)**:
     24-layer, 1024-hidden, 16-heads, 340M parameters
 
 We recommend to host checkpoints on Google Cloud storage buckets when you use
@@ -100,22 +92,22 @@ Install `tf-nightly` to get latest updates:
 pip install tf-nightly-gpu
 ```
 
-With TPU, GPU support is not necessary. First, you need to create a `tf-nigthly`
-TPU with [cptu tool](https://github.com/tensorflow/tpu/tree/master/tools/ctpu):
+With TPU, GPU support is not necessary. First, you need to create a `tf-nightly`
+TPU with [ctpu tool](https://github.com/tensorflow/tpu/tree/master/tools/ctpu):
 
 ```shell
 ctpu up -name <instance name> --tf-version=”nightly”
 ```
 
-Second, you need to install TF 2 `tf-night` on your VM:
+Second, you need to install TF 2 `tf-nightly` on your VM:
 
 ```shell
 pip install tf-nightly
 ```
 
 Warning: More details TPU-specific set-up instructions and tutorial should come
-along with official TF 2.x release for TPU. Note that this repo is not officially
-supported by Google Cloud TPU team yet.
+along with official TF 2.x release for TPU. Note that this repo is not
+officially supported by Google Cloud TPU team yet until TF 2.1 released.
 
 ## Process Datasets
 
@@ -145,7 +137,7 @@ and unpack it to some directory `$GLUE_DIR`.
 
 ```shell
 export GLUE_DIR=~/glue
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 
 export TASK_NAME=MNLI
 export OUTPUT_DIR=gs://some_bucket/datasets
@@ -176,7 +168,7 @@ The necessary files can be found here:
 ```shell
 export SQUAD_DIR=~/squad
 export SQUAD_VERSION=v1.1
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export OUTPUT_DIR=gs://some_bucket/datasets
 
 python create_finetuning_data.py \
@@ -194,7 +186,7 @@ python create_finetuning_data.py \
 * Cloud Storage
 
 The unzipped pre-trained model files can also be found in the Google Cloud
-Storage folder `gs://cloud-tpu-checkpoints/bert/tf_20`. For example:
+Storage folder `gs://cloud-tpu-checkpoints/bert/keras_bert`. For example:
 
 ```shell
 export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
@@ -209,7 +201,7 @@ script should run with `tf-nightly`.
 Just add the following flags to `run_classifier.py` or `run_squad.py`:
 
 ```shell
-  --strategy_type=tpu
+  --distribution_strategy=tpu
   --tpu=grpc://${TPU_IP_ADDRESS}:8470
 ```
 
@@ -225,7 +217,7 @@ For GPU memory of 16GB or smaller, you may try to use `BERT-Base`
 (uncased_L-12_H-768_A-12).
 
 ```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export MODEL_DIR=gs://some_bucket/my_output_dir
 export GLUE_DIR=gs://some_bucket/datasets
 export TASK=MRPC
@@ -243,14 +235,14 @@ python run_classifier.py \
   --learning_rate=2e-5 \
   --num_train_epochs=3 \
   --model_dir=${MODEL_DIR} \
-  --strategy_type=mirror
+  --distribution_strategy=mirrored
 ```
 
 To use TPU, you only need to switch distribution strategy type to `tpu` with TPU
 information and use remote storage for model checkpoints.
 
 ```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export TPU_IP_ADDRESS='???'
 export MODEL_DIR=gs://some_bucket/my_output_dir
 export GLUE_DIR=gs://some_bucket/datasets
@@ -267,7 +259,7 @@ python run_classifier.py \
   --learning_rate=2e-5 \
   --num_train_epochs=3 \
   --model_dir=${MODEL_DIR} \
-  --strategy_type=tpu \
+  --distribution_strategy=tpu \
   --tpu=grpc://${TPU_IP_ADDRESS}:8470
 ```
 
@@ -282,7 +274,7 @@ For GPU memory of 16GB or smaller, you may try to use `BERT-Base`
 (uncased_L-12_H-768_A-12).
 
 ```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export SQUAD_DIR=gs://some_bucket/datasets
 export MODEL_DIR=gs://some_bucket/my_output_dir
 export SQUAD_VERSION=v1.1
@@ -299,14 +291,14 @@ python run_squad.py \
   --learning_rate=8e-5 \
   --num_train_epochs=2 \
   --model_dir=${MODEL_DIR} \
-  --strategy_type=mirror
+  --distribution_strategy=mirrored
 ```
 
 To use TPU, you need switch distribution strategy type to `tpu` with TPU
 information.
 
 ```shell
-export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16
+export BERT_BASE_DIR=gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16
 export TPU_IP_ADDRESS='???'
 export MODEL_DIR=gs://some_bucket/my_output_dir
 export SQUAD_DIR=gs://some_bucket/datasets
@@ -323,7 +315,7 @@ python run_squad.py \
   --learning_rate=8e-5 \
   --num_train_epochs=2 \
   --model_dir=${MODEL_DIR} \
-  --strategy_type=tpu \
+  --distribution_strategy=tpu \
   --tpu=grpc://${TPU_IP_ADDRESS}:8470
 ```
 

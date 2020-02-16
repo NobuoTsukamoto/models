@@ -1,3 +1,4 @@
+# coding=utf-8
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +29,10 @@ import unicodedata
 
 import six
 import tensorflow as tf
+
+import sentencepiece as spm
+
+SPIECE_UNDERLINE = "▁"
 
 
 def validate_case_matches_checkpoint(do_lower_case, init_checkpoint):
@@ -166,10 +171,11 @@ def whitespace_tokenize(text):
 class FullTokenizer(object):
   """Runs end-to-end tokenziation."""
 
-  def __init__(self, vocab_file, do_lower_case=True):
+  def __init__(self, vocab_file, do_lower_case=True, split_on_punc=True):
     self.vocab = load_vocab(vocab_file)
     self.inv_vocab = {v: k for k, v in self.vocab.items()}
-    self.basic_tokenizer = BasicTokenizer(do_lower_case=do_lower_case)
+    self.basic_tokenizer = BasicTokenizer(
+        do_lower_case=do_lower_case, split_on_punc=split_on_punc)
     self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
 
   def tokenize(self, text):
@@ -190,13 +196,17 @@ class FullTokenizer(object):
 class BasicTokenizer(object):
   """Runs basic tokenization (punctuation splitting, lower casing, etc.)."""
 
-  def __init__(self, do_lower_case=True):
+  def __init__(self, do_lower_case=True, split_on_punc=True):
     """Constructs a BasicTokenizer.
 
     Args:
       do_lower_case: Whether to lower case the input.
+      split_on_punc: Whether to apply split on punctuations. By default BERT
+        starts a new token for punctuations. This makes detokenization difficult
+        for tasks like seq2seq decoding.
     """
     self.do_lower_case = do_lower_case
+    self.split_on_punc = split_on_punc
 
   def tokenize(self, text):
     """Tokenizes a piece of text."""
@@ -217,7 +227,10 @@ class BasicTokenizer(object):
       if self.do_lower_case:
         token = token.lower()
         token = self._run_strip_accents(token)
-      split_tokens.extend(self._run_split_on_punc(token))
+      if self.split_on_punc:
+        split_tokens.extend(self._run_split_on_punc(token))
+      else:
+        split_tokens.append(token)
 
     output_tokens = whitespace_tokenize(" ".join(split_tokens))
     return output_tokens
@@ -366,7 +379,7 @@ class WordpieceTokenizer(object):
 
 def _is_whitespace(char):
   """Checks whether `chars` is a whitespace character."""
-  # \t, \n, and \r are technically contorl characters but we treat them
+  # \t, \n, and \r are technically control characters but we treat them
   # as whitespace since they are generally considered as such.
   if char == " " or char == "\t" or char == "\n" or char == "\r":
     return True
@@ -402,3 +415,131 @@ def _is_punctuation(char):
   if cat.startswith("P"):
     return True
   return False
+
+
+def preprocess_text(inputs, remove_space=True, lower=False):
+  """Preprocesses data by removing extra space and normalize data.
+
+  This method is used together with sentence piece tokenizer and is forked from:
+  https://github.com/google-research/google-research/blob/master/albert/tokenization.py
+
+  Args:
+    inputs: The input text.
+    remove_space: Whether to remove the extra space.
+    lower: Whether to lowercase the text.
+
+  Returns:
+    The preprocessed text.
+
+  """
+  outputs = inputs
+  if remove_space:
+    outputs = " ".join(inputs.strip().split())
+
+  if six.PY2 and isinstance(outputs, str):
+    try:
+      outputs = six.ensure_text(outputs, "utf-8")
+    except UnicodeDecodeError:
+      outputs = six.ensure_text(outputs, "latin-1")
+
+  outputs = unicodedata.normalize("NFKD", outputs)
+  outputs = "".join([c for c in outputs if not unicodedata.combining(c)])
+  if lower:
+    outputs = outputs.lower()
+
+  return outputs
+
+
+def encode_pieces(sp_model, text, sample=False):
+  """Segements text into pieces.
+
+  This method is used together with sentence piece tokenizer and is forked from:
+  https://github.com/google-research/google-research/blob/master/albert/tokenization.py
+
+
+  Args:
+    sp_model: A spm.SentencePieceProcessor object.
+    text: The input text to be segemented.
+    sample: Whether to randomly sample a segmentation output or return a
+      deterministic one.
+
+  Returns:
+    A list of token pieces.
+  """
+  if six.PY2 and isinstance(text, six.text_type):
+    text = six.ensure_binary(text, "utf-8")
+
+  if not sample:
+    pieces = sp_model.EncodeAsPieces(text)
+  else:
+    pieces = sp_model.SampleEncodeAsPieces(text, 64, 0.1)
+  new_pieces = []
+  for piece in pieces:
+    piece = printable_text(piece)
+    if len(piece) > 1 and piece[-1] == "," and piece[-2].isdigit():
+      cur_pieces = sp_model.EncodeAsPieces(piece[:-1].replace(
+          SPIECE_UNDERLINE, ""))
+      if piece[0] != SPIECE_UNDERLINE and cur_pieces[0][0] == SPIECE_UNDERLINE:
+        if len(cur_pieces[0]) == 1:
+          cur_pieces = cur_pieces[1:]
+        else:
+          cur_pieces[0] = cur_pieces[0][1:]
+      cur_pieces.append(piece[-1])
+      new_pieces.extend(cur_pieces)
+    else:
+      new_pieces.append(piece)
+
+  return new_pieces
+
+
+def encode_ids(sp_model, text, sample=False):
+  """Segments text and return token ids.
+
+  This method is used together with sentence piece tokenizer and is forked from:
+  https://github.com/google-research/google-research/blob/master/albert/tokenization.py
+
+  Args:
+    sp_model: A spm.SentencePieceProcessor object.
+    text: The input text to be segemented.
+    sample: Whether to randomly sample a segmentation output or return a
+      deterministic one.
+
+  Returns:
+    A list of token ids.
+  """
+  pieces = encode_pieces(sp_model, text, sample=sample)
+  ids = [sp_model.PieceToId(piece) for piece in pieces]
+  return ids
+
+
+class FullSentencePieceTokenizer(object):
+  """Runs end-to-end sentence piece tokenization.
+
+  The interface of this class is intended to keep the same as above
+  `FullTokenizer` class for easier usage.
+  """
+
+  def __init__(self, sp_model_file):
+    """Inits FullSentencePieceTokenizer.
+
+    Args:
+      sp_model_file: The path to the sentence piece model file.
+    """
+    self.sp_model = spm.SentencePieceProcessor()
+    self.sp_model.Load(sp_model_file)
+    self.vocab = {
+        self.sp_model.IdToPiece(i): i
+        for i in six.moves.range(self.sp_model.GetPieceSize())
+    }
+
+  def tokenize(self, text):
+    """Tokenizes text into pieces."""
+    return encode_pieces(self.sp_model, text)
+
+  def convert_tokens_to_ids(self, tokens):
+    """Converts a list of tokens to a list of ids."""
+    return [self.sp_model.PieceToId(printable_text(token)) for token in tokens]
+
+  def convert_ids_to_tokens(self, ids):
+    """Converts a list of ids ot a list of tokens."""
+    return [self.sp_model.IdToPiece(id_) for id_ in ids]

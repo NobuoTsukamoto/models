@@ -143,7 +143,7 @@ def get_filenames(is_training, data_dir):
         for i in range(128)]
 
 
-def _parse_example_proto(example_serialized):
+def parse_example_proto(example_serialized):
   """Parses an Example proto containing a training example of an image.
 
   The output of the build_image_data.py image preprocessing script is a dataset
@@ -226,9 +226,10 @@ def parse_record(raw_record, is_training, dtype):
     dtype: data type to use for images/features.
 
   Returns:
-    Tuple with processed image tensor and one-hot-encoded label tensor.
+    Tuple with processed image tensor in a channel-last format and
+    one-hot-encoded label tensor.
   """
-  image_buffer, label, bbox = _parse_example_proto(raw_record)
+  image_buffer, label, bbox = parse_example_proto(raw_record)
 
   image = preprocess_image(
       image_buffer=image_buffer,
@@ -246,6 +247,32 @@ def parse_record(raw_record, is_training, dtype):
   return image, label
 
 
+def get_parse_record_fn(use_keras_image_data_format=False):
+  """Get a function for parsing the records, accounting for image format.
+
+  This is useful by handling different types of Keras models. For instance,
+  the current resnet_model.resnet50 input format is always channel-last,
+  whereas the keras_applications mobilenet input format depends on
+  tf.keras.backend.image_data_format(). We should set
+  use_keras_image_data_format=False for the former and True for the latter.
+
+  Args:
+    use_keras_image_data_format: A boolean denoting whether data format is keras
+      backend image data format. If False, the image format is channel-last. If
+      True, the image format matches tf.keras.backend.image_data_format().
+
+  Returns:
+    Function to use for parsing the records.
+  """
+  def parse_record_fn(raw_record, is_training, dtype):
+    image, label = parse_record(raw_record, is_training, dtype)
+    if use_keras_image_data_format:
+      if tf.keras.backend.image_data_format() == 'channels_first':
+        image = tf.transpose(image, perm=[2, 0, 1])
+    return image, label
+  return parse_record_fn
+
+
 def input_fn(is_training,
              data_dir,
              batch_size,
@@ -256,7 +283,8 @@ def input_fn(is_training,
              input_context=None,
              drop_remainder=False,
              tf_data_experimental_slack=False,
-             training_dataset_cache=False):
+             training_dataset_cache=False,
+             filenames=None):
   """Input function which provides batches for train or eval.
 
   Args:
@@ -276,11 +304,13 @@ def input_fn(is_training,
     training_dataset_cache: Whether to cache the training dataset on workers.
        Typically used to improve training performance when training data is in
        remote storage and can fit into worker memory.
+    filenames: Optional field for providing the file names of the TFRecords.
 
   Returns:
     A dataset that can be used for iteration.
   """
-  filenames = get_filenames(is_training, data_dir)
+  if filenames is None:
+    filenames = get_filenames(is_training, data_dir)
   dataset = tf.data.Dataset.from_tensor_slices(filenames)
 
   if input_context:

@@ -39,6 +39,7 @@ from official.recommendation import constants as rconst
 from official.recommendation import movielens
 from official.recommendation import popen_helper
 from official.recommendation import stat_utils
+from tensorflow.python.tpu.datasets import StreamingFilesDataset
 
 
 SUMMARY_TEMPLATE = """General:
@@ -286,10 +287,6 @@ class DatasetManager(object):
 
       file_pattern = os.path.join(
           epoch_data_dir, rconst.SHARD_TEMPLATE.format("*"))
-      # TODO(seemuch): remove this contrib import
-      # pylint: disable=line-too-long
-      from tensorflow.contrib.tpu.python.tpu.datasets import StreamingFilesDataset
-      # pylint: enable=line-too-long
       dataset = StreamingFilesDataset(
           files=file_pattern, worker_job=popen_helper.worker_job(),
           num_parallel_reads=rconst.NUM_FILE_SHARDS, num_epochs=1,
@@ -428,7 +425,8 @@ class BaseDataConstructor(threading.Thread):
     self._shuffle_with_forkpool = not stream_files
     if stream_files:
       self._shard_root = epoch_dir or tempfile.mkdtemp(prefix="ncf_")
-      atexit.register(tf.io.gfile.rmtree, dirname=self._shard_root)
+      if not create_data_offline:
+        atexit.register(tf.io.gfile.rmtree, self._shard_root)
     else:
       self._shard_root = None
 

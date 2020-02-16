@@ -31,17 +31,17 @@ import tensorflow as tf
 # pylint: enable=g-bad-import-order
 
 from official.benchmark import bert_benchmark_utils as benchmark_utils
-from official.nlp import bert_modeling as modeling
-from official.nlp.bert import input_pipeline
+from official.nlp.bert import configs
 from official.nlp.bert import run_classifier
 from official.utils.misc import distribution_utils
+from official.utils.testing import benchmark_wrappers
 
 # pylint: disable=line-too-long
 PRETRAINED_CHECKPOINT_PATH = 'gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16/bert_model.ckpt'
 CLASSIFIER_TRAIN_DATA_PATH = 'gs://tf-perfzero-data/bert/classification/mrpc_train.tf_record'
 CLASSIFIER_EVAL_DATA_PATH = 'gs://tf-perfzero-data/bert/classification/mrpc_eval.tf_record'
 CLASSIFIER_INPUT_META_DATA_PATH = 'gs://tf-perfzero-data/bert/classification/mrpc_meta_data'
-MODEL_CONFIG_FILE_PATH = 'gs://cloud-tpu-checkpoints/bert/tf_20/uncased_L-24_H-1024_A-16/bert_config'
+MODEL_CONFIG_FILE_PATH = 'gs://cloud-tpu-checkpoints/bert/keras_bert/uncased_L-24_H-1024_A-16/bert_config.json'
 # pylint: enable=line-too-long
 
 TMP_DIR = os.getenv('TMPDIR')
@@ -51,10 +51,11 @@ FLAGS = flags.FLAGS
 class BertClassifyBenchmarkBase(benchmark_utils.BertBenchmarkBase):
   """Base class to hold methods common to test classes in the module."""
 
-  def __init__(self, output_dir=None):
+  def __init__(self, output_dir=None, tpu=None):
     super(BertClassifyBenchmarkBase, self).__init__(output_dir)
     self.num_epochs = None
     self.num_steps_per_epoch = None
+    self.tpu = tpu
 
   @flagsaver.flagsaver
   def _run_bert_classifier(self, callbacks=None, use_ds=True):
@@ -62,7 +63,7 @@ class BertClassifyBenchmarkBase(benchmark_utils.BertBenchmarkBase):
     with tf.io.gfile.GFile(FLAGS.input_meta_data_path, 'rb') as reader:
       input_meta_data = json.loads(reader.read().decode('utf-8'))
 
-    bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
+    bert_config = configs.BertConfig.from_json_file(FLAGS.bert_config_file)
     epochs = self.num_epochs if self.num_epochs else FLAGS.num_train_epochs
     if self.num_steps_per_epoch:
       steps_per_epoch = self.num_steps_per_epoch
@@ -72,25 +73,27 @@ class BertClassifyBenchmarkBase(benchmark_utils.BertBenchmarkBase):
     warmup_steps = int(epochs * steps_per_epoch * 0.1)
     eval_steps = int(
         math.ceil(input_meta_data['eval_data_size'] / FLAGS.eval_batch_size))
-    strategy = distribution_utils.get_distribution_strategy(
-        distribution_strategy='mirrored' if use_ds else 'off',
-        num_gpus=self.num_gpus)
+    if self.tpu:
+      strategy = distribution_utils.get_distribution_strategy(
+          distribution_strategy='tpu', tpu_address=self.tpu)
+    else:
+      strategy = distribution_utils.get_distribution_strategy(
+          distribution_strategy='mirrored' if use_ds else 'off',
+          num_gpus=self.num_gpus)
 
     steps_per_loop = 1
 
     max_seq_length = input_meta_data['max_seq_length']
-    train_input_fn = functools.partial(
-        input_pipeline.create_classifier_dataset,
+    train_input_fn = run_classifier.get_dataset_fn(
         FLAGS.train_data_path,
-        seq_length=max_seq_length,
-        batch_size=FLAGS.train_batch_size)
-    eval_input_fn = functools.partial(
-        input_pipeline.create_classifier_dataset,
+        max_seq_length,
+        FLAGS.train_batch_size,
+        is_training=True)
+    eval_input_fn = run_classifier.get_dataset_fn(
         FLAGS.eval_data_path,
-        seq_length=max_seq_length,
-        batch_size=FLAGS.eval_batch_size,
-        is_training=False,
-        drop_remainder=False)
+        max_seq_length,
+        FLAGS.eval_batch_size,
+        is_training=False)
     run_classifier.run_bert_classifier(
         strategy,
         bert_config,
@@ -111,13 +114,15 @@ class BertClassifyBenchmarkBase(benchmark_utils.BertBenchmarkBase):
 class BertClassifyBenchmarkReal(BertClassifyBenchmarkBase):
   """Short benchmark performance tests for BERT model.
 
-  Tests BERT classification performance in different GPU configurations.
+  Tests BERT classification performance in different GPU, TPU configurations.
   The naming convention of below test cases follow
-  `benchmark_(number of gpus)_gpu_(dataset type)` format.
+  `benchmark_(number of gpus)_gpu_(dataset type)` for GPUs and
+  `benchmark_(topology)_tpu_(dataset type)` for TPUs.
   """
 
-  def __init__(self, output_dir=TMP_DIR, **kwargs):
-    super(BertClassifyBenchmarkReal, self).__init__(output_dir=output_dir)
+  def __init__(self, output_dir=TMP_DIR, tpu=None, **kwargs):
+    super(BertClassifyBenchmarkReal, self).__init__(
+        output_dir=output_dir, tpu=tpu)
 
     self.train_data_path = CLASSIFIER_TRAIN_DATA_PATH
     self.eval_data_path = CLASSIFIER_EVAL_DATA_PATH
@@ -130,6 +135,7 @@ class BertClassifyBenchmarkReal(BertClassifyBenchmarkBase):
     self.num_steps_per_epoch = 110
     self.num_epochs = 1
 
+  @benchmark_wrappers.enable_runtime_flags
   def _run_and_report_benchmark(self,
                                 training_summary_path,
                                 min_accuracy=0,
@@ -146,6 +152,8 @@ class BertClassifyBenchmarkReal(BertClassifyBenchmarkBase):
     # Since we do not load from any pretrained checkpoints, we ignore all
     # accuracy metrics.
     summary.pop('eval_metrics', None)
+    summary['start_time_sec'] = start_time_sec
+
     super(BertClassifyBenchmarkReal, self)._report_benchmark(
         stats=summary,
         wall_time_sec=wall_time_sec,
@@ -290,6 +298,22 @@ class BertClassifyBenchmarkReal(BertClassifyBenchmarkBase):
                                 'summaries/training_summary.txt')
     self._run_and_report_benchmark(summary_path, use_ds=False)
 
+  def benchmark_2x2_tpu_mrpc(self):
+    """Test BERT model performance with 2x2 TPU."""
+
+    self._setup()
+    FLAGS.model_dir = self._get_model_dir('benchmark_2x2_tpu_mrpc')
+    FLAGS.train_data_path = self.train_data_path
+    FLAGS.eval_data_path = self.eval_data_path
+    FLAGS.input_meta_data_path = self.input_meta_data_path
+    FLAGS.bert_config_file = self.bert_config_file
+    FLAGS.train_batch_size = 32
+    FLAGS.eval_batch_size = 32
+
+    summary_path = os.path.join(FLAGS.model_dir,
+                                'summaries/training_summary.txt')
+    self._run_and_report_benchmark(summary_path, use_ds=False)
+
 
 class BertClassifyAccuracy(BertClassifyBenchmarkBase):
   """Short accuracy test for BERT model.
@@ -308,6 +332,7 @@ class BertClassifyAccuracy(BertClassifyBenchmarkBase):
 
     super(BertClassifyAccuracy, self).__init__(output_dir=output_dir)
 
+  @benchmark_wrappers.enable_runtime_flags
   def _run_and_report_benchmark(self,
                                 training_summary_path,
                                 min_accuracy=0.84,

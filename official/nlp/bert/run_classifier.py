@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""BERT classification finetuning runner in tf2.0."""
-
+"""BERT classification finetuning runner in TF 2.x."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import functools
 import json
 import math
 import os
@@ -28,16 +26,16 @@ from absl import flags
 from absl import logging
 import tensorflow as tf
 
-# pylint: disable=g-import-not-at-top,redefined-outer-name,reimported
 from official.modeling import model_training_utils
-from official.nlp import bert_modeling as modeling
-from official.nlp import bert_models
 from official.nlp import optimization
+from official.nlp.bert import bert_models
 from official.nlp.bert import common_flags
+from official.nlp.bert import configs as bert_configs
 from official.nlp.bert import input_pipeline
 from official.nlp.bert import model_saving_utils
+from official.utils.misc import distribution_utils
 from official.utils.misc import keras_utils
-from official.utils.misc import tpu_lib
+
 
 flags.DEFINE_enum(
     'mode', 'train_and_eval', ['train_and_eval', 'export_only'],
@@ -80,6 +78,25 @@ def get_loss_fn(num_classes, loss_factor=1.0):
   return classification_loss_fn
 
 
+def get_dataset_fn(input_file_pattern, max_seq_length, global_batch_size,
+                   is_training):
+  """Gets a closure to create a dataset."""
+
+  def _dataset_fn(ctx=None):
+    """Returns tf.data.Dataset for distributed BERT pretraining."""
+    batch_size = ctx.get_per_replica_batch_size(
+        global_batch_size) if ctx else global_batch_size
+    dataset = input_pipeline.create_classifier_dataset(
+        input_file_pattern,
+        max_seq_length,
+        batch_size,
+        is_training=is_training,
+        input_pipeline_context=ctx)
+    return dataset
+
+  return _dataset_fn
+
+
 def run_bert_classifier(strategy,
                         bert_config,
                         input_meta_data,
@@ -105,7 +122,6 @@ def run_bert_classifier(strategy,
     classifier_model, core_model = (
         bert_models.classifier_model(
             bert_config,
-            tf.float32,
             num_classes,
             max_seq_length,
             hub_module_url=FLAGS.hub_module_url))
@@ -253,8 +269,10 @@ def export_classifier(model_export_path, input_meta_data,
   if not model_dir:
     raise ValueError('Export path is not specified: %s' % model_dir)
 
+  # Export uses float32 for now, even if training uses mixed precision.
+  tf.keras.mixed_precision.experimental.set_policy('float32')
   classifier_model = bert_models.classifier_model(
-      bert_config, tf.float32, input_meta_data['num_labels'],
+      bert_config, input_meta_data['num_labels'],
       input_meta_data['max_seq_length'])[0]
 
   model_saving_utils.export_bert_model(
@@ -264,16 +282,19 @@ def export_classifier(model_export_path, input_meta_data,
       restore_model_using_load_weights=restore_model_using_load_weights)
 
 
-def run_bert(strategy, input_meta_data, train_input_fn, eval_input_fn):
+def run_bert(strategy,
+             input_meta_data,
+             model_config,
+             train_input_fn=None,
+             eval_input_fn=None):
   """Run BERT training."""
-  bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
   if FLAGS.mode == 'export_only':
     # As Keras ModelCheckpoint callback used with Keras compile/fit() API
     # internally uses model.save_weights() to save checkpoints, we must
     # use model.load_weights() when Keras compile/fit() is used.
     export_classifier(FLAGS.model_export_path, input_meta_data,
                       FLAGS.use_keras_compile_fit,
-                      bert_config, FLAGS.model_dir)
+                      model_config, FLAGS.model_dir)
     return
 
   if FLAGS.mode != 'train_and_eval':
@@ -293,7 +314,7 @@ def run_bert(strategy, input_meta_data, train_input_fn, eval_input_fn):
 
   trained_model = run_bert_classifier(
       strategy,
-      bert_config,
+      model_config,
       input_meta_data,
       FLAGS.model_dir,
       epochs,
@@ -329,30 +350,25 @@ def main(_):
   if not FLAGS.model_dir:
     FLAGS.model_dir = '/tmp/bert20/'
 
-  strategy = None
-  if FLAGS.strategy_type == 'mirror':
-    strategy = tf.distribute.MirroredStrategy()
-  elif FLAGS.strategy_type == 'tpu':
-    cluster_resolver = tpu_lib.tpu_initialize(FLAGS.tpu)
-    strategy = tf.distribute.experimental.TPUStrategy(cluster_resolver)
-  else:
-    raise ValueError('The distribution strategy type is not supported: %s' %
-                     FLAGS.strategy_type)
-
+  strategy = distribution_utils.get_distribution_strategy(
+      distribution_strategy=FLAGS.distribution_strategy,
+      num_gpus=FLAGS.num_gpus,
+      tpu_address=FLAGS.tpu)
   max_seq_length = input_meta_data['max_seq_length']
-  train_input_fn = functools.partial(
-      input_pipeline.create_classifier_dataset,
+  train_input_fn = get_dataset_fn(
       FLAGS.train_data_path,
-      seq_length=max_seq_length,
-      batch_size=FLAGS.train_batch_size)
-  eval_input_fn = functools.partial(
-      input_pipeline.create_classifier_dataset,
+      max_seq_length,
+      FLAGS.train_batch_size,
+      is_training=True)
+  eval_input_fn = get_dataset_fn(
       FLAGS.eval_data_path,
-      seq_length=max_seq_length,
-      batch_size=FLAGS.eval_batch_size,
-      is_training=False,
-      drop_remainder=False)
-  run_bert(strategy, input_meta_data, train_input_fn, eval_input_fn)
+      max_seq_length,
+      FLAGS.eval_batch_size,
+      is_training=False)
+
+  bert_config = bert_configs.BertConfig.from_json_file(FLAGS.bert_config_file)
+  run_bert(strategy, input_meta_data, bert_config, train_input_fn,
+           eval_input_fn)
 
 
 if __name__ == '__main__':

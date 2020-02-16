@@ -13,9 +13,11 @@
 # limitations under the License.
 # ==============================================================================
 """Layers package definition."""
-from official.nlp.modeling.layers.attention import Attention
+from official.nlp.modeling.layers.attention import *  # pylint: disable=wildcard-import
 from official.nlp.modeling.layers.dense_einsum import DenseEinsum
 from official.nlp.modeling.layers.masked_softmax import MaskedSoftmax
 from official.nlp.modeling.layers.on_device_embedding import OnDeviceEmbedding
 from official.nlp.modeling.layers.position_embedding import PositionEmbedding
+from official.nlp.modeling.layers.self_attention_mask import SelfAttentionMask
 from official.nlp.modeling.layers.transformer import Transformer
+from official.nlp.modeling.layers.transformer_scaffold import TransformerScaffold

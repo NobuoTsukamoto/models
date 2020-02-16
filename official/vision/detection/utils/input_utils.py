@@ -138,9 +138,9 @@ def resize_and_crop_image(image,
       equals to `output_size`.
     image_info: a 2D `Tensor` that encodes the information of the image and the
       applied preprocessing. It is in the format of
-      [[original_height, original_width], [scaled_height, scaled_width],
-       [y_scale, x_scale], [y_offset, x_offset]], where [scaled_height,
-      scaled_width] is the actual scaled image size, and [y_scale, x_scale] is
+      [[original_height, original_width], [desired_height, desired_width],
+       [y_scale, x_scale], [y_offset, x_offset]], where [desired_height,
+      desireed_width] is the actual scaled image size, and [y_scale, x_scale] is
       the scaling factory, which is the ratio of
       scaled dimension / original dimension.
   """
@@ -189,9 +189,11 @@ def resize_and_crop_image(image,
     output_image = tf.image.pad_to_bounding_box(scaled_image, 0, 0,
                                                 padded_size[0], padded_size[1])
 
-    image_info = tf.stack(
-        [image_size, scaled_size, image_scale,
-         tf.cast(offset, tf.float32)])
+    image_info = tf.stack([
+        image_size,
+        tf.cast(desired_size, dtype=tf.float32),
+        image_scale,
+        tf.cast(offset, tf.float32)])
     return output_image, image_info
 
 
@@ -236,9 +238,9 @@ def resize_and_crop_image_v2(image,
       equals to `output_size`.
     image_info: a 2D `Tensor` that encodes the information of the image and the
       applied preprocessing. It is in the format of
-      [[original_height, original_width], [scaled_height, scaled_width],
-       [y_scale, x_scale], [y_offset, x_offset]], where [scaled_height,
-      scaled_width] is the actual scaled image size, and [y_scale, x_scale] is
+      [[original_height, original_width], [desired_height, desired_width],
+       [y_scale, x_scale], [y_offset, x_offset]], where [desired_height,
+      desired_width] is the actual scaled image size, and [y_scale, x_scale] is
       the scaling factor, which is the ratio of
       scaled dimension / original dimension.
   """
@@ -295,7 +297,7 @@ def resize_and_crop_image_v2(image,
 
     image_info = tf.stack([
         image_size,
-        scaled_size,
+        tf.cast(desired_size, dtype=tf.float32),
         image_scale,
         tf.cast(offset, tf.float32)])
     return output_image, image_info
@@ -362,13 +364,3 @@ def resize_and_crop_masks(masks,
 def random_horizontal_flip(image, boxes=None, masks=None):
   """Randomly flips input image and bounding boxes."""
   return preprocessor.random_horizontal_flip(image, boxes, masks)
-
-
-def get_non_empty_box_indices(boxes):
-  """Get indices for non-empty boxes."""
-  # Selects indices if box height or width is 0.
-  height = boxes[:, 2] - boxes[:, 0]
-  width = boxes[:, 3] - boxes[:, 1]
-  indices = tf.where(tf.logical_and(tf.greater(height, 0),
-                                    tf.greater(width, 0)))
-  return indices[:, 0]

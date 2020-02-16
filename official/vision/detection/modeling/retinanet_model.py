@@ -25,40 +25,11 @@ import tensorflow.compat.v2 as tf
 
 from tensorflow.python.keras import backend
 from official.vision.detection.dataloader import mode_keys
+from official.vision.detection.evaluation import factory as eval_factory
 from official.vision.detection.modeling import base_model
 from official.vision.detection.modeling import losses
-from official.vision.detection.modeling import postprocess
 from official.vision.detection.modeling.architecture import factory
-from official.vision.detection.evaluation import factory as eval_factory
-
-
-class COCOMetrics(object):
-  # This is only a wrapper for COCO metric and works on for numpy array. So it
-  # doesn't inherit from tf.keras.layers.Layer or tf.keras.metrics.Metric.
-
-  def __init__(self, params):
-    self._evaluator = eval_factory.evaluator_generator(params.eval)
-
-  def update_state(self, y_true, y_pred):
-    labels = tf.nest.map_structure(lambda x: x.numpy(), y_true)
-    outputs = tf.nest.map_structure(lambda x: x.numpy(), y_pred)
-    groundtruths = {}
-    predictions = {}
-    for key, val in outputs.items():
-      if isinstance(val, tuple):
-        val = np.concatenate(val)
-      predictions[key] = val
-    for key, val in labels.items():
-      if isinstance(val, tuple):
-        val = np.concatenate(val)
-      groundtruths[key] = val
-    self._evaluator.update(predictions, groundtruths)
-
-  def result(self):
-    return self._evaluator.evaluate()
-
-  def reset_states(self):
-    return self._evaluator.reset()
+from official.vision.detection.ops import postprocess_ops
 
 
 class RetinanetModel(base_model.Model):
@@ -82,10 +53,9 @@ class RetinanetModel(base_model.Model):
     self._keras_model = None
 
     # Predict function.
-    self._generate_detections_fn = postprocess.GenerateOneStageDetections(
+    self._generate_detections_fn = postprocess_ops.MultilevelDetectionGenerator(
         params.postprocess)
 
-    self._l2_weight_decay = params.train.l2_weight_decay
     self._transpose_input = params.train.transpose_input
     assert not self._transpose_input, 'Transpose input is not supportted.'
     # Input layer.
@@ -97,6 +67,11 @@ class RetinanetModel(base_model.Model):
         dtype=tf.bfloat16 if self._use_bfloat16 else tf.float32)
 
   def build_outputs(self, inputs, mode):
+    # If the input image is transposed (from NHWC to HWCN), we need to revert it
+    # back to the original shape before it's used in the computation.
+    if self._transpose_input:
+      inputs = tf.transpose(inputs, [3, 0, 1, 2])
+
     backbone_features = self._backbone_fn(
         inputs, is_training=(mode == mode_keys.TRAIN))
     fpn_features = self._fpn_fn(
@@ -120,6 +95,9 @@ class RetinanetModel(base_model.Model):
     if self._keras_model is None:
       raise ValueError('build_loss_fn() must be called after build_model().')
 
+    filter_fn = self.make_filter_trainable_variables_fn()
+    trainable_variables = filter_fn(self._keras_model.trainable_variables)
+
     def _total_loss_fn(labels, outputs):
       cls_loss = self._cls_loss_fn(outputs['cls_outputs'],
                                    labels['cls_targets'],
@@ -129,7 +107,7 @@ class RetinanetModel(base_model.Model):
                                    labels['num_positives'])
       model_loss = cls_loss + self._box_loss_weight * box_loss
       l2_regularization_loss = self.weight_decay_loss(self._l2_weight_decay,
-                                                      self._keras_model)
+                                                      trainable_variables)
       total_loss = model_loss + l2_regularization_loss
       return {
           'total_loss': total_loss,
@@ -155,6 +133,7 @@ class RetinanetModel(base_model.Model):
     return self._keras_model
 
   def post_processing(self, labels, outputs):
+    # TODO(yeqing): Moves the output related part into build_outputs.
     required_output_fields = ['cls_outputs', 'box_outputs']
     for field in required_output_fields:
       if field not in outputs:
@@ -166,8 +145,8 @@ class RetinanetModel(base_model.Model):
         raise ValueError('"%s" is missing in outputs, requried %s found %s',
                          field, required_label_fields, labels.keys())
     boxes, scores, classes, valid_detections = self._generate_detections_fn(
-        inputs=(outputs['box_outputs'], outputs['cls_outputs'],
-                labels['anchor_boxes'], labels['image_info'][:, 1:2, :]))
+        outputs['box_outputs'], outputs['cls_outputs'],
+        labels['anchor_boxes'], labels['image_info'][:, 1:2, :])
     # Discards the old output tensors to save memory. The `cls_outputs` and
     # `box_outputs` are pretty big and could potentiall lead to memory issue.
     outputs = {
@@ -189,4 +168,4 @@ class RetinanetModel(base_model.Model):
     return labels, outputs
 
   def eval_metrics(self):
-    return COCOMetrics(self._params)
+    return eval_factory.evaluator_generator(self._params.eval)

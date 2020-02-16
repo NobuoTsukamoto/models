@@ -36,8 +36,15 @@ class OptimizerFactory(object):
   def __init__(self, params):
     """Creates optimized based on the specified flags."""
     if params.type == 'momentum':
+      nesterov = False
+      try:
+        nesterov = params.nesterov
+      except AttributeError:
+        pass
       self._optimizer = functools.partial(
-          tf.keras.optimizers.SGD, momentum=0.9, nesterov=True)
+          tf.keras.optimizers.SGD,
+          momentum=params.momentum,
+          nesterov=nesterov)
     elif params.type == 'adam':
       self._optimizer = tf.keras.optimizers.Adam
     elif params.type == 'adadelta':
@@ -86,12 +93,18 @@ class Model(object):
   def __init__(self, params):
     self._use_bfloat16 = params.architecture.use_bfloat16
 
+    if params.architecture.use_bfloat16:
+      policy = tf.compat.v2.keras.mixed_precision.experimental.Policy(
+          'mixed_bfloat16')
+      tf.compat.v2.keras.mixed_precision.experimental.set_policy(policy)
+
     # Optimization.
     self._optimizer_fn = OptimizerFactory(params.train.optimizer)
     self._learning_rate = learning_rates.learning_rate_generator(
         params.train.learning_rate)
 
     self._frozen_variable_prefix = params.train.frozen_variable_prefix
+    self._l2_weight_decay = params.train.l2_weight_decay
 
     # Checkpoint restoration.
     self._checkpoint = params.train.checkpoint.as_dict()
@@ -133,11 +146,10 @@ class Model(object):
     """
     return _make_filter_trainable_variables_fn(self._frozen_variable_prefix)
 
-  def weight_decay_loss(self, l2_weight_decay, keras_model):
-    # TODO(yeqing): Correct the filter according to  cr/269707763.
+  def weight_decay_loss(self, l2_weight_decay, trainable_variables):
     return l2_weight_decay * tf.add_n([
         tf.nn.l2_loss(v)
-        for v in self._keras_model.trainable_variables
+        for v in trainable_variables
         if 'batch_normalization' not in v.name and 'bias' not in v.name
     ])
 

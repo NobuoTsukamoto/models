@@ -22,114 +22,23 @@ from __future__ import print_function
 import json
 import os
 
-import numpy as np
 from absl import flags
 from absl import logging
+
+import numpy as np
 import tensorflow as tf
 
 # pylint: disable=unused-import,g-import-not-at-top,redefined-outer-name,reimported
 from typing import Optional, Dict, List, Text, Callable, Union, Iterator, Any
 from official.modeling.hyperparams import params_dict
 from official.utils.misc import tpu_lib
+from official.utils.misc import distribution_utils
+from official.utils import hyperparams_flags
 
 FLAGS = flags.FLAGS
 
-
-def define_common_hparams_flags():
-  """Define the common flags across models."""
-
-  flags.DEFINE_string(
-      'model_dir',
-      default=None,
-      help=('The directory where the model and training/evaluation summaries'
-            'are stored.'))
-
-  flags.DEFINE_integer(
-      'train_batch_size', default=None, help='Batch size for training.')
-
-  flags.DEFINE_integer(
-      'eval_batch_size', default=None, help='Batch size for evaluation.')
-
-  flags.DEFINE_string(
-      'precision',
-      default=None,
-      help=('Precision to use; one of: {bfloat16, float32}'))
-
-  flags.DEFINE_string(
-      'config_file',
-      default=None,
-      help=('A YAML file which specifies overrides. Note that this file can be '
-            'used as an override template to override the default parameters '
-            'specified in Python. If the same parameter is specified in both '
-            '`--config_file` and `--params_override`, the one in '
-            '`--params_override` will be used finally.'))
-
-  flags.DEFINE_string(
-      'params_override',
-      default=None,
-      help=('a YAML/JSON string or a YAML file which specifies additional '
-            'overrides over the default parameters and those specified in '
-            '`--config_file`. Note that this is supposed to be used only to '
-            'override the model parameters, but not the parameters like TPU '
-            'specific flags. One canonical use case of `--config_file` and '
-            '`--params_override` is users first define a template config file '
-            'using `--config_file`, then use `--params_override` to adjust the '
-            'minimal set of tuning parameters, for example setting up different'
-            ' `train_batch_size`. '
-            'The final override order of parameters: default_model_params --> '
-            'params from config_file --> params in params_override.'
-            'See also the help message of `--config_file`.'))
-
-  flags.DEFINE_string(
-      'strategy_type', 'mirrored', 'Type of distribute strategy.'
-      'One of mirrored, tpu and multiworker.')
-
-
-def initialize_common_flags():
-  """Define the common flags across models."""
-  define_common_hparams_flags()
-  flags.DEFINE_string(
-      'tpu',
-      default=None,
-      help='The Cloud TPU to use for training. This should be either the name '
-      'used when creating the Cloud TPU, or a grpc://ip.address.of.tpu:8470 '
-      'url.')
-  # Parameters for MultiWorkerMirroredStrategy
-  flags.DEFINE_string(
-      'worker_hosts',
-      default=None,
-      help='Comma-separated list of worker ip:port pairs for running '
-      'multi-worker models with distribution strategy.  The user would '
-      'start the program on each host with identical value for this flag.')
-  flags.DEFINE_integer(
-      'task_index', 0,
-      'If multi-worker training, the task_index of this worker.')
-  flags.DEFINE_integer('save_checkpoint_freq', None,
-                       'Number of steps to save checkpoint.')
-
-
-def strategy_flags_dict():
-  """Returns TPU related flags in a dictionary."""
-  return {
-      # TPUStrategy related flags.
-      'tpu': FLAGS.tpu,
-      # MultiWorkerMirroredStrategy related flags.
-      'worker_hosts': FLAGS.worker_hosts,
-      'task_index': FLAGS.task_index,
-  }
-
-
-def hparam_flags_dict():
-  """Returns model params related flags in a dictionary."""
-  return {
-      'data_dir': FLAGS.data_dir,
-      'model_dir': FLAGS.model_dir,
-      'train_batch_size': FLAGS.train_batch_size,
-      'eval_batch_size': FLAGS.eval_batch_size,
-      'precision': FLAGS.precision,
-      'config_file': FLAGS.config_file,
-      'params_override': FLAGS.params_override,
-  }
+strategy_flags_dict = hyperparams_flags.strategy_flags_dict
+hparam_flags_dict = hyperparams_flags.hparam_flags_dict
 
 
 def _save_checkpoint(checkpoint, model_dir, checkpoint_prefix):
@@ -339,9 +248,10 @@ class DistributedExecutor(object):
             _replicated_step, args=(next(iterator),))
 
       # For reporting, we returns the mean of losses.
-      loss = strategy.reduce(
-          tf.distribute.ReduceOp.MEAN, per_replica_losses, axis=None)
-      return loss
+      losses = tf.nest.map_structure(
+          lambda x: strategy.reduce(tf.distribute.ReduceOp.MEAN, x, axis=None),
+          per_replica_losses)
+      return losses
 
     return train_step
 
@@ -719,7 +629,6 @@ class DistributedExecutor(object):
     return NotImplementedError('Unimplmented function.')
 
 
-# TODO(yeqing): Add unit test for MultiWorkerMirroredStrategy.
 class ExecutorBuilder(object):
   """Builder of DistributedExecutor.
 
@@ -764,8 +673,14 @@ class ExecutorBuilder(object):
   """
 
   def __init__(self, strategy_type=None, strategy_config=None):
-    self._strategy_config = strategy_config
-    self._strategy = self._build_strategy(strategy_type)
+    _ = distribution_utils.configure_cluster(
+        strategy_config.worker_hosts, strategy_config.task_index)
+    self._strategy = distribution_utils.get_distribution_strategy(
+        distribution_strategy=strategy_type,
+        num_gpus=strategy_config.num_gpus,
+        all_reduce_alg=strategy_config.all_reduce_alg,
+        num_packs=strategy_config.num_packs,
+        tpu_address=strategy_config.tpu)
 
   @property
   def strategy(self):
@@ -777,66 +692,6 @@ class ExecutorBuilder(object):
     """Sets default summary writer for the current thread."""
     self._strategy = new_strategy
 
-  def _build_strategy(self, strategy_type):
-    """Builds tf.distribute.Strategy instance.
-
-    Args:
-      strategy_type: string. One of 'tpu', 'one_device_gpu', 'mirrored', 'multi_worker_mirrored'.
-
-    Returns:
-      An tf.distribute.Strategy object. Returns None if strategy_type is None.
-    """
-    if strategy_type is None:
-      return None
-
-    if strategy_type == 'tpu':
-      return self._build_tpu_strategy()
-    elif strategy_type == 'one_device_gpu':
-      return tf.distribute.OneDeviceStrategy("device:GPU:0")
-    elif strategy_type == 'mirrored':
-      return self._build_mirrored_strategy()
-    elif strategy_type == 'multi_worker_mirrored':
-      return self._build_multiworker_mirrored_strategy()
-    else:
-      raise NotImplementedError('Unsupport accelerator type "%s"' %
-                                strategy_type)
-
-  def _build_mirrored_strategy(self):
-    """Builds a MirroredStrategy object."""
-    return tf.distribute.MirroredStrategy()
-
-  def _build_tpu_strategy(self):
-    """Builds a TPUStrategy object."""
-
-    tpu = self._strategy_config.tpu
-    logging.info('Use TPU at %s', tpu if tpu is not None else '')
-    cluster_resolver = tpu_lib.tpu_initialize(tpu)
-    strategy = tf.distribute.experimental.TPUStrategy(cluster_resolver)
-
-    return strategy
-
-  def _build_multiworker_mirrored_strategy(self):
-    """Builds a MultiWorkerMirroredStrategy object."""
-
-    worker_hosts = self._strategy_config.worker_hosts
-
-    if worker_hosts is not None:
-      # Set TF_CONFIG environment variable
-      worker_hosts = worker_hosts.split(',')
-      task_index = self._strategy_config.task_index
-      os.environ['TF_CONFIG'] = json.dumps({
-          'cluster': {
-              'worker': worker_hosts
-          },
-          'task': {
-              'type': 'worker',
-              'index': task_index
-          }
-      })
-
-    multiworker_strategy = (
-        tf.distribute.experimental.MultiWorkerMirroredStrategy())
-    return multiworker_strategy
 
   def build_executor(self,
                      class_ctor=DistributedExecutor,

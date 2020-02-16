@@ -231,18 +231,18 @@ class Parser(object):
     image_scale = image_info[2, :]
     offset = image_info[3, :]
     boxes = input_utils.resize_and_crop_boxes(
-        boxes, image_scale, (image_height, image_width), offset)
+        boxes, image_scale, image_info[1, :], offset)
 
     # Filters out ground truth boxes that are all zeros.
-    indices = input_utils.get_non_empty_box_indices(boxes)
+    indices = box_utils.get_non_empty_box_indices(boxes)
     boxes = tf.gather(boxes, indices)
     classes = tf.gather(classes, indices)
     if self._include_mask:
       masks = tf.gather(masks, indices)
-      cropped_boxes = boxes + tf.cast(
-          tf.tile(tf.expand_dims(offset, axis=0), [1, 2]), dtype=tf.float32)
-      cropped_boxes = box_utils.normalize_boxes(
-          cropped_boxes, image_info[1, :])
+      # Transfer boxes to the original image space and do normalization.
+      cropped_boxes = boxes + tf.tile(tf.expand_dims(offset, axis=0), [1, 2])
+      cropped_boxes /= tf.tile(tf.expand_dims(image_scale, axis=0), [1, 2])
+      cropped_boxes = box_utils.normalize_boxes(cropped_boxes, image_shape)
       num_masks = tf.shape(masks)[0]
       masks = tf.image.crop_and_resize(
           tf.expand_dims(masks, axis=-1),
@@ -275,6 +275,10 @@ class Parser(object):
     if self._use_bfloat16:
       image = tf.cast(image, dtype=tf.bfloat16)
 
+    inputs = {
+        'image': image,
+        'image_info': image_info,
+    }
     # Packs labels for model_fn outputs.
     labels = {
         'anchor_boxes': input_anchor.multilevel_boxes,
@@ -282,15 +286,16 @@ class Parser(object):
         'rpn_score_targets': rpn_score_targets,
         'rpn_box_targets': rpn_box_targets,
     }
-    labels['gt_boxes'] = input_utils.pad_to_fixed_size(
-        boxes, self._max_num_instances, -1)
-    labels['gt_classes'] = input_utils.pad_to_fixed_size(
+    inputs['gt_boxes'] = input_utils.pad_to_fixed_size(boxes,
+                                                       self._max_num_instances,
+                                                       -1)
+    inputs['gt_classes'] = input_utils.pad_to_fixed_size(
         classes, self._max_num_instances, -1)
     if self._include_mask:
-      labels['gt_masks'] = input_utils.pad_to_fixed_size(
+      inputs['gt_masks'] = input_utils.pad_to_fixed_size(
           masks, self._max_num_instances, -1)
 
-    return image, labels
+    return inputs, labels
 
   def _parse_eval_data(self, data):
     """Parses data for evaluation."""
@@ -349,8 +354,6 @@ class Parser(object):
         (image_height, image_width))
 
     labels = {
-        'source_id': dataloader_utils.process_source_id(data['source_id']),
-        'anchor_boxes': input_anchor.multilevel_boxes,
         'image_info': image_info,
     }
 
@@ -372,6 +375,11 @@ class Parser(object):
           groundtruths['source_id'])
       groundtruths = dataloader_utils.pad_groundtruths_to_fixed_size(
           groundtruths, self._max_num_instances)
+      # TODO(yeqing):  Remove the `groundtrtuh` layer key (no longer needed).
       labels['groundtruths'] = groundtruths
+    inputs = {
+        'image': image,
+        'image_info': image_info,
+    }
 
-    return image, labels
+    return inputs, labels

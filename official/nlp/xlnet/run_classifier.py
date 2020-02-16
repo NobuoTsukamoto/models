@@ -27,12 +27,12 @@ from absl import logging
 import numpy as np
 import tensorflow as tf
 # pylint: disable=unused-import
-from official.nlp import xlnet_config
-from official.nlp import xlnet_modeling as modeling
 from official.nlp.xlnet import common_flags
 from official.nlp.xlnet import data_utils
 from official.nlp.xlnet import optimization
 from official.nlp.xlnet import training_utils
+from official.nlp.xlnet import xlnet_config
+from official.nlp.xlnet import xlnet_modeling as modeling
 from official.utils.misc import tpu_lib
 
 flags.DEFINE_integer("n_class", default=2, help="Number of classes.")
@@ -91,9 +91,7 @@ def run_evaluation(strategy,
         _test_step_fn, args=(next(test_iterator),))
     return logits, labels, masks
 
-  # pylint: disable=protected-access
-  test_iterator = data_utils._get_input_iterator(test_input_fn, strategy)
-  # pylint: enable=protected-access
+  test_iterator = data_utils.get_input_iterator(test_input_fn, strategy)
   correct = 0
   total = 0
   for _ in range(eval_steps):

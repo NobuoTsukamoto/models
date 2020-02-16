@@ -11,13 +11,11 @@ For more information about other types of models, please refer to this
 ## ResNet
 
 Similar to the [estimator implementation](../../r1/resnet), the Keras
-implementation has code for both CIFAR-10 data and ImageNet data. The CIFAR-10
-version uses a ResNet56 model implemented in
-[`resnet_cifar_model.py`](./resnet_cifar_model.py), and the ImageNet version
-uses a ResNet50 model implemented in [`resnet_model.py`](./resnet_model.py).
+implementation has code for the ImageNet dataset. The ImageNet
+version uses a ResNet50 model implemented in
+[`resnet_model.py`](./resnet_model.py).
 
-To use
-either dataset, make sure that you have the latest version of TensorFlow
+Please make sure that you have the latest version of TensorFlow
 installed and
 [add the models folder to your Python path](/official/#running-the-models).
 
@@ -27,26 +25,6 @@ installed and
 
 * ResNet50 TFHub: [feature vector](https://tfhub.dev/tensorflow/resnet_50/feature_vector/1)
 and [classification](https://tfhub.dev/tensorflow/resnet_50/classification/1)
-
-### CIFAR-10
-
-Download and extract the CIFAR-10 data. You can use the following script:
-```bash
-python ../../r1/resnet/cifar10_download_and_extract.py
-```
-
-After you download the data, you can run the program by:
-
-```bash
-python resnet_cifar_main.py
-```
-
-If you did not use the default directory to download the data, specify the
-location with the `--data_dir` flag, like:
-
-```bash
-python resnet_cifar_main.py --data_dir=/path/to/cifar
-```
 
 ### ImageNet Training
 
@@ -113,6 +91,19 @@ distributed training across the GPUs.
 If you wish to run without `tf.distribute.Strategy`, you can do so by setting
 `--distribution_strategy=off`.
 
+### Running on multiple GPU hosts
+
+You can also train these models on multiple hosts, each with GPUs, using
+`tf.distribute.Strategy`.
+
+The easiest way to run multi-host benchmarks is to set the
+[`TF_CONFIG`](https://www.tensorflow.org/guide/distributed_training#TF_CONFIG)
+appropriately at each host.  e.g., to run using `MultiWorkerMirroredStrategy` on
+2 hosts, the `cluster` in `TF_CONFIG` should have 2 `host:port` entries, and
+host `i` should have the `task` in `TF_CONFIG` set to `{"type": "worker",
+"index": i}`.  `MultiWorkerMirroredStrategy` will automatically use all the
+available GPUs at each host.
+
 ### Running on Cloud TPUs
 
 Note: This model will **not** work with TPUs on Colab.
@@ -139,7 +130,7 @@ python resnet_ctl_imagenet_main.py \
   --use_synthetic_data=false \
   --dtype=fp32 \
   --enable_eager=true \
-  --enable_tensorboard=false \
+  --enable_tensorboard=true \
   --distribution_strategy=tpu \
   --log_steps=50 \
   --single_l2_loss_op=true \
@@ -159,7 +150,7 @@ python resnet_ctl_imagenet_main.py \
   --use_synthetic_data=false \
   --dtype=fp32 \
   --enable_eager=true \
-  --enable_tensorboard=false \
+  --enable_tensorboard=true \
   --distribution_strategy=tpu \
   --log_steps=50 \
   --single_l2_loss_op=true \

@@ -25,6 +25,8 @@ from absl import flags
 from absl import logging
 import tensorflow as tf
 
+import tensorflow_model_optimization as tfmot
+
 from official.benchmark.models import trivial_model
 from official.utils.flags import core as flags_core
 from official.utils.logs import logger
@@ -44,6 +46,7 @@ def run(flags_obj):
 
   Raises:
     ValueError: If fp16 is passed as it is not currently supported.
+    NotImplementedError: If some features are not currently supported.
 
   Returns:
     Dictionary of training and eval stats.
@@ -54,9 +57,11 @@ def run(flags_obj):
 
   # Execute flag override logic for better model performance
   if flags_obj.tf_gpu_thread_mode:
-    common.set_gpu_thread_mode_and_count(flags_obj)
-  if flags_obj.data_delay_prefetch:
-    common.data_delay_prefetch()
+    keras_utils.set_gpu_thread_mode_and_count(
+        per_gpu_thread_count=flags_obj.per_gpu_thread_count,
+        gpu_thread_mode=flags_obj.tf_gpu_thread_mode,
+        num_gpus=flags_obj.num_gpus,
+        datasets_num_private_threads=flags_obj.datasets_num_private_threads)
   common.set_cudnn_batchnorm_mode()
 
   dtype = flags_core.get_tf_dtype(flags_obj)
@@ -79,13 +84,12 @@ def run(flags_obj):
   tf.keras.backend.set_image_data_format(data_format)
 
   # Configures cluster spec for distribution strategy.
-  num_workers = distribution_utils.configure_cluster(flags_obj.worker_hosts,
-                                                     flags_obj.task_index)
+  _ = distribution_utils.configure_cluster(flags_obj.worker_hosts,
+                                           flags_obj.task_index)
 
   strategy = distribution_utils.get_distribution_strategy(
       distribution_strategy=flags_obj.distribution_strategy,
       num_gpus=flags_obj.num_gpus,
-      num_workers=num_workers,
       all_reduce_alg=flags_obj.all_reduce_alg,
       num_packs=flags_obj.num_packs,
       tpu_address=flags_obj.tpu)
@@ -118,12 +122,20 @@ def run(flags_obj):
   # in the dataset, as XLA-GPU doesn't support dynamic shapes.
   drop_remainder = flags_obj.enable_xla
 
+  # Current resnet_model.resnet50 input format is always channel-last.
+  # We use keras_application mobilenet model which input format is depends on
+  # the keras beckend image data format.
+  # This use_keras_image_data_format flags indicates whether image preprocessor
+  # output format should be same as the keras backend image data format or just
+  # channel-last format.
+  use_keras_image_data_format = (flags_obj.model == 'mobilenet')
   train_input_dataset = input_fn(
       is_training=True,
       data_dir=flags_obj.data_dir,
       batch_size=flags_obj.batch_size,
       num_epochs=flags_obj.train_epochs,
-      parse_record_fn=imagenet_preprocessing.parse_record,
+      parse_record_fn=imagenet_preprocessing.get_parse_record_fn(
+          use_keras_image_data_format=use_keras_image_data_format),
       datasets_num_private_threads=flags_obj.datasets_num_private_threads,
       dtype=dtype,
       drop_remainder=drop_remainder,
@@ -138,7 +150,8 @@ def run(flags_obj):
         data_dir=flags_obj.data_dir,
         batch_size=flags_obj.batch_size,
         num_epochs=flags_obj.train_epochs,
-        parse_record_fn=imagenet_preprocessing.parse_record,
+        parse_record_fn=imagenet_preprocessing.get_parse_record_fn(
+            use_keras_image_data_format=use_keras_image_data_format),
         dtype=dtype,
         drop_remainder=drop_remainder)
 
@@ -151,9 +164,24 @@ def run(flags_obj):
         boundaries=list(p[1] for p in common.LR_SCHEDULE[1:]),
         multipliers=list(p[0] for p in common.LR_SCHEDULE),
         compute_lr_on_cpu=True)
+  steps_per_epoch = (
+      imagenet_preprocessing.NUM_IMAGES['train'] // flags_obj.batch_size)
 
+  learning_rate_schedule_fn = None
   with strategy_scope:
-    optimizer = common.get_optimizer(lr_schedule)
+    if flags_obj.optimizer == 'resnet50_default':
+      optimizer = common.get_optimizer(lr_schedule)
+      learning_rate_schedule_fn = common.learning_rate_schedule
+    elif flags_obj.optimizer == 'mobilenet_default':
+      initial_learning_rate = \
+          flags_obj.initial_learning_rate_per_sample * flags_obj.batch_size
+      optimizer = tf.keras.optimizers.SGD(
+          learning_rate=tf.keras.optimizers.schedules.ExponentialDecay(
+              initial_learning_rate,
+              decay_steps=steps_per_epoch * flags_obj.num_epochs_per_decay,
+              decay_rate=flags_obj.lr_decay_factor,
+              staircase=True),
+          momentum=0.9)
     if flags_obj.fp16_implementation == 'graph_rewrite':
       # Note: when flags_obj.fp16_implementation == "graph_rewrite", dtype as
       # determined by flags_core.get_tf_dtype(flags_obj) would be 'float32'
@@ -167,10 +195,37 @@ def run(flags_obj):
     if flags_obj.use_trivial_model:
       model = trivial_model.trivial_model(
           imagenet_preprocessing.NUM_CLASSES)
-    else:
+    elif flags_obj.model == 'resnet50_v1.5':
+      resnet_model.change_keras_layer(flags_obj.use_tf_keras_layers)
       model = resnet_model.resnet50(
           num_classes=imagenet_preprocessing.NUM_CLASSES)
+    elif flags_obj.model == 'mobilenet':
+      # TODO(kimjaehong): Remove layers attribute when minimum TF version
+      # support 2.0 layers by default.
+      model = tf.keras.applications.mobilenet.MobileNet(
+          weights=None,
+          classes=imagenet_preprocessing.NUM_CLASSES,
+          layers=tf.keras.layers)
+    if flags_obj.pretrained_filepath:
+      model.load_weights(flags_obj.pretrained_filepath)
 
+    if flags_obj.pruning_method == 'polynomial_decay':
+      if dtype != tf.float32:
+        raise NotImplementedError(
+            'Pruning is currently only supported on dtype=tf.float32.')
+      pruning_params = {
+          'pruning_schedule':
+              tfmot.sparsity.keras.PolynomialDecay(
+                  initial_sparsity=flags_obj.pruning_initial_sparsity,
+                  final_sparsity=flags_obj.pruning_final_sparsity,
+                  begin_step=flags_obj.pruning_begin_step,
+                  end_step=flags_obj.pruning_end_step,
+                  frequency=flags_obj.pruning_frequency),
+      }
+      model = tfmot.sparsity.keras.prune_low_magnitude(model, **pruning_params)
+    elif flags_obj.pruning_method:
+      raise NotImplementedError(
+          'Only polynomial_decay is currently supported.')
     # TODO(b/138957587): Remove when force_v2_in_keras_compile is on longer
     # a valid arg for this model. Also remove as a valid flag.
     if flags_obj.force_v2_in_keras_compile is not None:
@@ -189,19 +244,18 @@ def run(flags_obj):
                    if flags_obj.report_accuracy_metrics else None),
           run_eagerly=flags_obj.run_eagerly)
 
-  callbacks = common.get_callbacks(
-      common.learning_rate_schedule, imagenet_preprocessing.NUM_IMAGES['train'])
-  if flags_obj.enable_checkpoint_and_export:
-    ckpt_full_path = os.path.join(flags_obj.model_dir, 'model.ckpt-{epoch:04d}')
-    callbacks.append(tf.keras.callbacks.ModelCheckpoint(ckpt_full_path,
-                                                        save_weights_only=True))
-  train_steps = (
-      imagenet_preprocessing.NUM_IMAGES['train'] // flags_obj.batch_size)
   train_epochs = flags_obj.train_epochs
+
+  callbacks = common.get_callbacks(
+      steps_per_epoch=steps_per_epoch,
+      learning_rate_schedule_fn=learning_rate_schedule_fn,
+      pruning_method=flags_obj.pruning_method,
+      enable_checkpoint_and_export=flags_obj.enable_checkpoint_and_export,
+      model_dir=flags_obj.model_dir)
 
   # if mutliple epochs, ignore the train_steps flag.
   if train_epochs <= 1 and flags_obj.train_steps:
-    train_steps = min(flags_obj.train_steps, train_steps)
+    steps_per_epoch = min(flags_obj.train_steps, steps_per_epoch)
     train_epochs = 1
 
   num_eval_steps = (
@@ -227,25 +281,28 @@ def run(flags_obj):
 
   history = model.fit(train_input_dataset,
                       epochs=train_epochs,
-                      steps_per_epoch=train_steps,
+                      steps_per_epoch=steps_per_epoch,
                       callbacks=callbacks,
                       validation_steps=num_eval_steps,
                       validation_data=validation_data,
                       validation_freq=flags_obj.epochs_between_evals,
                       verbose=2)
-  if flags_obj.enable_checkpoint_and_export:
-    if dtype == tf.bfloat16:
-      logging.warning("Keras model.save does not support bfloat16 dtype.")
-    else:
-      # Keras model.save assumes a float32 input designature.
-      export_path = os.path.join(flags_obj.model_dir, 'saved_model')
-      model.save(export_path, include_optimizer=False)
 
   eval_output = None
   if not flags_obj.skip_eval:
     eval_output = model.evaluate(eval_input_dataset,
                                  steps=num_eval_steps,
                                  verbose=2)
+
+  if flags_obj.pruning_method:
+    model = tfmot.sparsity.keras.strip_pruning(model)
+  if flags_obj.enable_checkpoint_and_export:
+    if dtype == tf.bfloat16:
+      logging.warning('Keras model.save does not support bfloat16 dtype.')
+    else:
+      # Keras model.save assumes a float32 input designature.
+      export_path = os.path.join(flags_obj.model_dir, 'saved_model')
+      model.save(export_path, include_optimizer=False)
 
   if not strategy and flags_obj.explicit_gpu_placement:
     no_dist_strat_device.__exit__()
@@ -255,7 +312,11 @@ def run(flags_obj):
 
 
 def define_imagenet_keras_flags():
-  common.define_keras_flags()
+  common.define_keras_flags(
+      model=True,
+      optimizer=True,
+      pretrained_filepath=True)
+  common.define_pruning_flags()
   flags_core.set_defaults()
   flags.adopt_module_key_flags(common)
 
