@@ -38,13 +38,13 @@ from object_detection.utils import dataset_util
 from object_detection.utils import label_map_util
 
 flags = tf.app.flags
-flags.DEFINE_string('data_dir', '', 'Root directory to raw pet dataset.')
-flags.DEFINE_string('image_dir', '', 'Root directory to raw pet dataset.')
+flags.DEFINE_string('data_dir', '', 'Root directory to raw annotation dataset.')
+flags.DEFINE_string('image_dir', '', 'Root directory to raw image dataset.')
 flags.DEFINE_string('output_dir', '', 'Path to directory to output TFRecords.')
 flags.DEFINE_string('label_map_path', 'data/ai_edge_label_map.pbtxt',
                     'Path to label map proto')
 flags.DEFINE_integer('num_shards', 10, 'Number of TFRecord shards')
-flags.DEFINE_float('prop', 0.2, 'Number of TFRecord shards')
+flags.DEFINE_float('prop', 1.0, 'Number of TFRecord shards')
 
 FLAGS = flags.FLAGS
 
@@ -81,8 +81,8 @@ def dict_to_tf_example(data,
         raise ValueError('Image format not JPEG')
     key = hashlib.sha256(encoded_jpg).hexdigest()
 
-    width = 800
-    height = 600
+    width = 1936
+    height = 1216
 
     xmins = []
     ymins = []
@@ -97,7 +97,7 @@ def dict_to_tf_example(data,
         ymin = float(obj['box2d']['y1'])
         ymax = float(obj['box2d']['y2'])
 
-        if xmin > 800 or xmax > 800 or ymin > 600 or ymax > 600:
+        if xmin > width or xmax > width or ymin > height or ymax > height:
             print('Error data', obj, img_path)
 
         xmins.append(xmin / width)
@@ -165,7 +165,7 @@ def create_tf_record(output_filename,
             with open(json_path, 'r') as fid:
                 json_data = json.load(fid)
 
-            data = json_data['Labels']
+            data = json_data
             image_file_name = os.path.splitext(example)[0] + '.jpg'
 
             try:
@@ -197,8 +197,8 @@ def main(_):
     random.seed(42)
     random.shuffle(examples_list)
     num_examples = int(len(examples_list) * FLAGS.prop)
-    num_train = int(0.7 * num_examples)
-    num_val = int(0.3 * num_examples)
+    num_train = int(0.8 * num_examples)
+    num_val = int(0.2 * num_examples)
     train_examples = examples_list[:num_train]
     val_examples = examples_list[num_train:num_train+num_val]
     print('train num', len(train_examples), ' val num', len(val_examples))
