@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Run masked LM/next sentence masked_lm pre-training for BERT in TF 2.x."""
+"""Run masked LM/next sentence pre-training for BERT in TF 2.x."""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -20,14 +20,15 @@ from __future__ import print_function
 from absl import app
 from absl import flags
 from absl import logging
+import gin
 import tensorflow as tf
-
-from official.modeling import model_training_utils
+from official.modeling import performance
 from official.nlp import optimization
 from official.nlp.bert import bert_models
 from official.nlp.bert import common_flags
 from official.nlp.bert import configs
 from official.nlp.bert import input_pipeline
+from official.nlp.bert import model_training_utils
 from official.utils.misc import distribution_utils
 
 
@@ -48,6 +49,7 @@ flags.DEFINE_float('warmup_steps', 10000,
                    'Warmup steps for Adam weight decay optimizer.')
 
 common_flags.define_common_bert_flags()
+common_flags.define_gin_flags()
 
 FLAGS = flags.FLAGS
 
@@ -71,11 +73,11 @@ def get_pretrain_dataset_fn(input_file_pattern, seq_length,
   return _dataset_fn
 
 
-def get_loss_fn(loss_factor=1.0):
+def get_loss_fn():
   """Returns loss function for BERT pretraining."""
 
   def _bert_pretrain_loss_fn(unused_labels, losses, **unused_args):
-    return tf.reduce_mean(losses) * loss_factor
+    return tf.reduce_mean(losses)
 
   return _bert_pretrain_loss_fn
 
@@ -102,24 +104,20 @@ def run_customized_training(strategy,
     """Gets a pretraining model."""
     pretrain_model, core_model = bert_models.pretrain_model(
         bert_config, max_seq_length, max_predictions_per_seq)
-    pretrain_model.optimizer = optimization.create_optimizer(
-        initial_lr, steps_per_epoch * epochs, warmup_steps)
-    if FLAGS.fp16_implementation == 'graph_rewrite':
-      # Note: when flags_obj.fp16_implementation == "graph_rewrite", dtype as
-      # determined by flags_core.get_tf_dtype(flags_obj) would be 'float32'
-      # which will ensure tf.compat.v2.keras.mixed_precision and
-      # tf.train.experimental.enable_mixed_precision_graph_rewrite do not double
-      # up.
-      pretrain_model.optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
-          pretrain_model.optimizer)
+    optimizer = optimization.create_optimizer(
+        initial_lr, steps_per_epoch * epochs, warmup_steps,
+        FLAGS.optimizer_type)
+    pretrain_model.optimizer = performance.configure_optimizer(
+        optimizer,
+        use_float16=common_flags.use_float16(),
+        use_graph_rewrite=common_flags.use_graph_rewrite())
     return pretrain_model, core_model
 
   trained_model = model_training_utils.run_customized_training_loop(
       strategy=strategy,
       model_fn=_get_pretrain_model,
-      loss_fn=get_loss_fn(
-          loss_factor=1.0 /
-          strategy.num_replicas_in_sync if FLAGS.scale_loss else 1.0),
+      loss_fn=get_loss_fn(),
+      scale_loss=FLAGS.scale_loss,
       model_dir=model_dir,
       train_input_fn=train_input_fn,
       steps_per_epoch=steps_per_epoch,
@@ -141,6 +139,8 @@ def run_bert_pretrain(strategy):
   logging.info('Training using customized training loop TF 2.0 with distrubuted'
                'strategy.')
 
+  performance.set_mixed_precision_policy(common_flags.dtype())
+
   return run_customized_training(
       strategy,
       bert_config,
@@ -158,8 +158,7 @@ def run_bert_pretrain(strategy):
 
 def main(_):
   # Users should always run this script under TF 2.x
-  assert tf.version.VERSION.startswith('2.')
-
+  gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param)
   if not FLAGS.model_dir:
     FLAGS.model_dir = '/tmp/bert20/'
   strategy = distribution_utils.get_distribution_strategy(

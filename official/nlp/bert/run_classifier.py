@@ -25,14 +25,14 @@ from absl import app
 from absl import flags
 from absl import logging
 import tensorflow as tf
-
-from official.modeling import model_training_utils
+from official.modeling import performance
 from official.nlp import optimization
 from official.nlp.bert import bert_models
 from official.nlp.bert import common_flags
 from official.nlp.bert import configs as bert_configs
 from official.nlp.bert import input_pipeline
 from official.nlp.bert import model_saving_utils
+from official.nlp.bert import model_training_utils
 from official.utils.misc import distribution_utils
 from official.utils.misc import keras_utils
 
@@ -60,7 +60,7 @@ common_flags.define_common_bert_flags()
 FLAGS = flags.FLAGS
 
 
-def get_loss_fn(num_classes, loss_factor=1.0):
+def get_loss_fn(num_classes):
   """Gets the classification loss function."""
 
   def classification_loss_fn(labels, logits):
@@ -71,9 +71,7 @@ def get_loss_fn(num_classes, loss_factor=1.0):
         tf.cast(labels, dtype=tf.int32), depth=num_classes, dtype=tf.float32)
     per_example_loss = -tf.reduce_sum(
         tf.cast(one_hot_labels, dtype=tf.float32) * log_probs, axis=-1)
-    loss = tf.reduce_mean(per_example_loss)
-    loss *= loss_factor
-    return loss
+    return tf.reduce_mean(per_example_loss)
 
   return classification_loss_fn
 
@@ -124,30 +122,18 @@ def run_bert_classifier(strategy,
             bert_config,
             num_classes,
             max_seq_length,
-            hub_module_url=FLAGS.hub_module_url))
-    classifier_model.optimizer = optimization.create_optimizer(
-        initial_lr, steps_per_epoch * epochs, warmup_steps)
-    if FLAGS.fp16_implementation == 'graph_rewrite':
-      # Note: when flags_obj.fp16_implementation == "graph_rewrite", dtype as
-      # determined by flags_core.get_tf_dtype(flags_obj) would be 'float32'
-      # which will ensure tf.compat.v2.keras.mixed_precision and
-      # tf.train.experimental.enable_mixed_precision_graph_rewrite do not double
-      # up.
-      classifier_model.optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
-          classifier_model.optimizer)
+            hub_module_url=FLAGS.hub_module_url,
+            hub_module_trainable=FLAGS.hub_module_trainable))
+    optimizer = optimization.create_optimizer(
+        initial_lr, steps_per_epoch * epochs, warmup_steps,
+        FLAGS.optimizer_type)
+    classifier_model.optimizer = performance.configure_optimizer(
+        optimizer,
+        use_float16=common_flags.use_float16(),
+        use_graph_rewrite=common_flags.use_graph_rewrite())
     return classifier_model, core_model
 
-  # During distributed training, loss used for gradient computation is
-  # summed over from all replicas. When Keras compile/fit() API is used,
-  # the fit() API internally normalizes the loss by dividing the loss by
-  # the number of replicas used for computation. However, when custom
-  # training loop is used this is not done automatically and should be
-  # done manually by the end user.
-  loss_multiplier = 1.0
-  if FLAGS.scale_loss and not use_keras_compile_fit:
-    loss_multiplier = 1.0 / strategy.num_replicas_in_sync
-
-  loss_fn = get_loss_fn(num_classes, loss_factor=loss_multiplier)
+  loss_fn = get_loss_fn(num_classes)
 
   # Defines evaluation metrics function, which will create metrics in the
   # correct device and strategy scope.
@@ -170,8 +156,9 @@ def run_bert_classifier(strategy,
         init_checkpoint,
         epochs,
         steps_per_epoch,
+        steps_per_loop,
         eval_steps,
-        custom_callbacks=None)
+        custom_callbacks=custom_callbacks)
 
   # Use user-defined loop to start training.
   logging.info('Training using customized training loop TF 2.0 with '
@@ -203,6 +190,7 @@ def run_keras_compile_fit(model_dir,
                           init_checkpoint,
                           epochs,
                           steps_per_epoch,
+                          steps_per_loop,
                           eval_steps,
                           custom_callbacks=None):
   """Runs BERT classifier model using Keras compile/fit API."""
@@ -217,7 +205,11 @@ def run_keras_compile_fit(model_dir,
       checkpoint = tf.train.Checkpoint(model=sub_model)
       checkpoint.restore(init_checkpoint).assert_existing_objects_matched()
 
-    bert_model.compile(optimizer=optimizer, loss=loss_fn, metrics=[metric_fn()])
+    bert_model.compile(
+        optimizer=optimizer,
+        loss=loss_fn,
+        metrics=[metric_fn()],
+        experimental_steps_per_execution=steps_per_loop)
 
     summary_dir = os.path.join(model_dir, 'summaries')
     summary_callback = tf.keras.callbacks.TensorBoard(summary_dir)
@@ -241,22 +233,74 @@ def run_keras_compile_fit(model_dir,
     return bert_model
 
 
+def get_predictions_and_labels(strategy, trained_model, eval_input_fn,
+                               eval_steps):
+  """Obtains predictions of trained model on evaluation data.
+
+  Note that list of labels is returned along with the predictions because the
+  order changes on distributing dataset over TPU pods.
+
+  Args:
+    strategy: Distribution strategy.
+    trained_model: Trained model with preloaded weights.
+    eval_input_fn: Input function for evaluation data.
+    eval_steps: Number of evaluation steps.
+
+  Returns:
+    predictions: List of predictions.
+    labels: List of gold labels corresponding to predictions.
+  """
+
+  @tf.function
+  def test_step(iterator):
+    """Computes predictions on distributed devices."""
+
+    def _test_step_fn(inputs):
+      """Replicated predictions."""
+      inputs, labels = inputs
+      model_outputs = trained_model(inputs, training=False)
+      return model_outputs, labels
+
+    outputs, labels = strategy.run(
+        _test_step_fn, args=(next(iterator),))
+    # outputs: current batch logits as a tuple of shard logits
+    outputs = tf.nest.map_structure(strategy.experimental_local_results,
+                                    outputs)
+    labels = tf.nest.map_structure(strategy.experimental_local_results, labels)
+    return outputs, labels
+
+  def _run_evaluation(test_iterator):
+    """Runs evaluation steps."""
+    preds, golds = list(), list()
+    for _ in range(eval_steps):
+      logits, labels = test_step(test_iterator)
+      for cur_logits, cur_labels in zip(logits, labels):
+        preds.extend(tf.math.argmax(cur_logits, axis=1).numpy())
+        golds.extend(cur_labels.numpy().tolist())
+    return preds, golds
+
+  test_iter = iter(
+      strategy.experimental_distribute_datasets_from_function(eval_input_fn))
+  predictions, labels = _run_evaluation(test_iter)
+
+  return predictions, labels
+
+
 def export_classifier(model_export_path, input_meta_data,
-                      restore_model_using_load_weights,
-                      bert_config, model_dir):
+                      restore_model_using_load_weights, bert_config, model_dir):
   """Exports a trained model as a `SavedModel` for inference.
 
   Args:
     model_export_path: a string specifying the path to the SavedModel directory.
     input_meta_data: dictionary containing meta data about input and model.
     restore_model_using_load_weights: Whether to use checkpoint.restore() API
-      for custom checkpoint or to use model.load_weights() API.
-      There are 2 different ways to save checkpoints. One is using
-      tf.train.Checkpoint and another is using Keras model.save_weights().
-      Custom training loop implementation uses tf.train.Checkpoint API
-      and Keras ModelCheckpoint callback internally uses model.save_weights()
-      API. Since these two API's cannot be used together, model loading logic
-      must be take into account how model checkpoint was saved.
+      for custom checkpoint or to use model.load_weights() API. There are 2
+      different ways to save checkpoints. One is using tf.train.Checkpoint and
+      another is using Keras model.save_weights(). Custom training loop
+      implementation uses tf.train.Checkpoint API and Keras ModelCheckpoint
+      callback internally uses model.save_weights() API. Since these two API's
+      cannot be used together, model loading logic must be take into account how
+      model checkpoint was saved.
     bert_config: Bert configuration file to define core bert layers.
     model_dir: The directory where the model weights and training/evaluation
       summaries are stored.
@@ -301,6 +345,7 @@ def run_bert(strategy,
     raise ValueError('Unsupported mode is specified: %s' % FLAGS.mode)
   # Enables XLA in Session Config. Should not be set for TPU.
   keras_utils.set_config_v2(FLAGS.enable_xla)
+  performance.set_mixed_precision_policy(common_flags.dtype())
 
   epochs = FLAGS.num_train_epochs
   train_data_size = input_meta_data['train_data_size']
@@ -311,6 +356,15 @@ def run_bert(strategy,
 
   if not strategy:
     raise ValueError('Distribution strategy has not been specified.')
+
+  if FLAGS.log_steps:
+    custom_callbacks = [keras_utils.TimeHistory(
+        batch_size=FLAGS.train_batch_size,
+        log_steps=FLAGS.log_steps,
+        logdir=FLAGS.model_dir,
+    )]
+  else:
+    custom_callbacks = None
 
   trained_model = run_bert_classifier(
       strategy,
@@ -327,7 +381,8 @@ def run_bert(strategy,
       train_input_fn,
       eval_input_fn,
       run_eagerly=FLAGS.run_eagerly,
-      use_keras_compile_fit=FLAGS.use_keras_compile_fit)
+      use_keras_compile_fit=FLAGS.use_keras_compile_fit,
+      custom_callbacks=custom_callbacks)
 
   if FLAGS.model_export_path:
     # As Keras ModelCheckpoint callback used with Keras compile/fit() API
@@ -342,7 +397,6 @@ def run_bert(strategy,
 
 def main(_):
   # Users should always run this script under TF 2.x
-  assert tf.version.VERSION.startswith('2.')
 
   with tf.io.gfile.GFile(FLAGS.input_meta_data_path, 'rb') as reader:
     input_meta_data = json.loads(reader.read().decode('utf-8'))

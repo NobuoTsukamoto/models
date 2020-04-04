@@ -17,7 +17,6 @@
 See README for description of setting the training schedule and evaluating the
 BLEU score.
 """
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -30,19 +29,19 @@ from absl import flags
 from absl import logging
 import tensorflow as tf
 
-# pylint: disable=g-bad-import-order
+from official.modeling import performance
 from official.nlp.transformer import compute_bleu
-from official.nlp.transformer.utils import tokenizer
 from official.nlp.transformer import data_pipeline
 from official.nlp.transformer import metrics
 from official.nlp.transformer import misc
 from official.nlp.transformer import optimizer
 from official.nlp.transformer import transformer
 from official.nlp.transformer import translate
+from official.nlp.transformer.utils import tokenizer
 from official.utils.flags import core as flags_core
 from official.utils.logs import logger
-from official.utils.misc import keras_utils
 from official.utils.misc import distribution_utils
+from official.utils.misc import keras_utils
 
 INF = int(1e9)
 BLEU_DIR = "bleu"
@@ -160,6 +159,7 @@ class TransformerTask(object):
     params["enable_tensorboard"] = flags_obj.enable_tensorboard
     params["enable_metrics_in_training"] = flags_obj.enable_metrics_in_training
     params["steps_between_evals"] = flags_obj.steps_between_evals
+    params["enable_checkpointing"] = flags_obj.enable_checkpointing
 
     self.distribution_strategy = distribution_utils.get_distribution_strategy(
         distribution_strategy=flags_obj.distribution_strategy,
@@ -180,21 +180,9 @@ class TransformerTask(object):
     else:
       logging.info("Not using any distribution strategy.")
 
-    if params["dtype"] == tf.float16:
-      # TODO(reedwm): It's pretty ugly to set the global policy in a constructor
-      # like this. What if multiple instances of TransformerTask are created?
-      # We should have a better way in the tf.keras.mixed_precision API of doing
-      # this.
-      loss_scale = flags_core.get_loss_scale(
-          flags_obj, default_for_fp16="dynamic")
-      policy = tf.compat.v2.keras.mixed_precision.experimental.Policy(
-          "mixed_float16", loss_scale=loss_scale)
-      tf.compat.v2.keras.mixed_precision.experimental.set_policy(policy)
-
-    elif params["dtype"] == tf.bfloat16:
-      policy = tf.compat.v2.keras.mixed_precision.experimental.Policy(
-          "mixed_bfloat16")
-      tf.compat.v2.keras.mixed_precision.experimental.set_policy(policy)
+    performance.set_mixed_precision_policy(
+        params["dtype"],
+        flags_core.get_loss_scale(flags_obj, default_for_fp16="dynamic"))
 
   @property
   def use_tpu(self):
@@ -258,6 +246,11 @@ class TransformerTask(object):
 
     callbacks = self._create_callbacks(flags_obj.model_dir, 0, params)
 
+    # Only TimeHistory callback is supported for CTL
+    if params["use_ctl"]:
+      callbacks = [cb for cb in callbacks
+                   if isinstance(cb, keras_utils.TimeHistory)]
+
     # TODO(b/139418525): Refactor the custom training loop logic.
     @tf.function
     def train_steps(iterator, steps):
@@ -292,7 +285,7 @@ class TransformerTask(object):
 
       for _ in tf.range(steps):
         train_loss_metric.reset_states()
-        self.distribution_strategy.experimental_run_v2(
+        self.distribution_strategy.run(
             _step_fn, args=(next(iterator),))
 
     cased_score, uncased_score = None, None
@@ -311,8 +304,13 @@ class TransformerTask(object):
         if not self.use_tpu:
           raise NotImplementedError(
               "Custom training loop on GPUs is not implemented.")
+
         # Runs training steps.
         with summary_writer.as_default():
+          for cb in callbacks:
+            cb.on_epoch_begin(current_iteration)
+            cb.on_batch_begin(0)
+
           train_steps(
               train_ds_iterator,
               tf.convert_to_tensor(train_steps_per_eval, dtype=tf.int32))
@@ -321,15 +319,25 @@ class TransformerTask(object):
           logging.info("Train Step: %d/%d / loss = %s", current_step,
                        flags_obj.train_steps, train_loss)
 
+          for cb in callbacks:
+            cb.on_batch_end(train_steps_per_eval - 1)
+            cb.on_epoch_end(current_iteration)
+
           if params["enable_tensorboard"]:
             for metric_obj in train_metrics:
               tf.compat.v2.summary.scalar(metric_obj.name, metric_obj.result(),
                                           current_step)
+              summary_writer.flush()
 
-        checkpoint_name = checkpoint.save(
-            os.path.join(flags_obj.model_dir,
-                         "ctl_step_{}.ckpt".format(current_step)))
-        logging.info("Saved checkpoint to %s", checkpoint_name)
+        for cb in callbacks:
+          cb.on_train_end()
+
+        if flags_obj.enable_checkpointing:
+          # avoid check-pointing when running for benchmarking.
+          checkpoint_name = checkpoint.save(
+              os.path.join(flags_obj.model_dir,
+                           "ctl_step_{}.ckpt".format(current_step)))
+          logging.info("Saved checkpoint to %s", checkpoint_name)
       else:
         if self.use_tpu:
           raise NotImplementedError(
@@ -410,10 +418,11 @@ class TransformerTask(object):
     scheduler_callback = optimizer.LearningRateScheduler(sfunc, init_steps)
     callbacks = misc.get_callbacks(params["steps_between_evals"])
     callbacks.append(scheduler_callback)
-    ckpt_full_path = os.path.join(cur_log_dir, "cp-{epoch:04d}.ckpt")
-    callbacks.append(
-        tf.keras.callbacks.ModelCheckpoint(
-            ckpt_full_path, save_weights_only=True))
+    if params["enable_checkpointing"]:
+      ckpt_full_path = os.path.join(cur_log_dir, "cp-{epoch:04d}.ckpt")
+      callbacks.append(
+          tf.keras.callbacks.ModelCheckpoint(
+              ckpt_full_path, save_weights_only=True))
     return callbacks
 
   def _load_weights_if_possible(self, model, init_weight_path=None):
@@ -434,8 +443,6 @@ class TransformerTask(object):
   def _create_optimizer(self):
     """Creates optimizer."""
     params = self.params
-    # TODO(b/139414679): Explore the difference between using
-    # LearningRateSchedule and callback for GPU runs, and try to merge them.
     lr_schedule = optimizer.LearningRateSchedule(
         params["learning_rate"], params["hidden_size"],
         params["learning_rate_warmup_steps"])
@@ -445,18 +452,12 @@ class TransformerTask(object):
         params["optimizer_adam_beta2"],
         epsilon=params["optimizer_adam_epsilon"])
 
-    if params["dtype"] == tf.float16:
-      opt = tf.keras.mixed_precision.experimental.LossScaleOptimizer(
-          opt,
-          loss_scale=flags_core.get_loss_scale(
-              self.flags_obj, default_for_fp16="dynamic"))
-    if self.flags_obj.fp16_implementation == "graph_rewrite":
-      # Note: when flags_obj.fp16_implementation == "graph_rewrite", dtype as
-      # determined by flags_core.get_tf_dtype(flags_obj) would be 'float32'
-      # which will ensure tf.compat.v2.keras.mixed_precision and
-      # tf.train.experimental.enable_mixed_precision_graph_rewrite do not double
-      # up.
-      opt = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt)
+    opt = performance.configure_optimizer(
+        opt,
+        use_float16=params["dtype"] == tf.float16,
+        use_graph_rewrite=self.flags_obj.fp16_implementation == "graph_rewrite",
+        loss_scale=flags_core.get_loss_scale(
+            self.flags_obj, default_for_fp16="dynamic"))
 
     return opt
 
@@ -491,7 +492,6 @@ def main(_):
 
 
 if __name__ == "__main__":
-  tf.compat.v1.enable_v2_behavior()
   logging.set_verbosity(logging.INFO)
   misc.define_transformer_flags()
   app.run(main)

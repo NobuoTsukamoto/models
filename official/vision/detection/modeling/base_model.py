@@ -18,13 +18,9 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-
 import abc
 import functools
 import re
-import six
-from absl import logging
-
 import tensorflow.compat.v2 as tf
 from official.vision.detection.modeling import checkpoint_utils
 from official.vision.detection.modeling import learning_rates
@@ -53,7 +49,7 @@ class OptimizerFactory(object):
       self._optimizer = tf.keras.optimizers.Adagrad
     elif params.type == 'rmsprop':
       self._optimizer = functools.partial(
-          tf.keras.optimizers.RMSProp, momentum=params.momentum)
+          tf.keras.optimizers.RMSprop, momentum=params.momentum)
     else:
       raise ValueError('Unsupported optimizer type %s.' % self._optimizer)
 
@@ -62,11 +58,10 @@ class OptimizerFactory(object):
 
 
 def _make_filter_trainable_variables_fn(frozen_variable_prefix):
-  """Creates a function for filtering trainable varialbes.
-  """
+  """Creates a function for filtering trainable varialbes."""
 
   def _filter_trainable_variables(variables):
-    """Filters trainable varialbes
+    """Filters trainable varialbes.
 
     Args:
       variables: a list of tf.Variable to be filtered.
@@ -104,6 +99,7 @@ class Model(object):
         params.train.learning_rate)
 
     self._frozen_variable_prefix = params.train.frozen_variable_prefix
+    self._regularization_var_regex = params.train.regularization_variable_regex
     self._l2_weight_decay = params.train.l2_weight_decay
 
     # Checkpoint restoration.
@@ -142,16 +138,18 @@ class Model(object):
     return self._optimizer_fn(self._learning_rate)
 
   def make_filter_trainable_variables_fn(self):
-    """Creates a function for filtering trainable varialbes.
-    """
+    """Creates a function for filtering trainable varialbes."""
     return _make_filter_trainable_variables_fn(self._frozen_variable_prefix)
 
-  def weight_decay_loss(self, l2_weight_decay, trainable_variables):
-    return l2_weight_decay * tf.add_n([
-        tf.nn.l2_loss(v)
-        for v in trainable_variables
-        if 'batch_normalization' not in v.name and 'bias' not in v.name
-    ])
+  def weight_decay_loss(self, trainable_variables):
+    reg_variables = [
+        v for v in trainable_variables
+        if self._regularization_var_regex is None
+        or re.match(self._regularization_var_regex, v.name)
+    ]
+
+    return self._l2_weight_decay * tf.add_n(
+        [tf.nn.l2_loss(v) for v in reg_variables])
 
   def make_restore_checkpoint_fn(self):
     """Returns scaffold function to restore parameters from v1 checkpoint."""

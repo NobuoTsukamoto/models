@@ -53,13 +53,17 @@ def create_loop_fn(step_fn):
     """
     try:
       step = 0
-      while (num_steps == -1 or step < num_steps):
-        outputs = step_fn(iterator)
-        if reduce_fn is not None:
-          state = reduce_fn(state, outputs)
-        step += 1
-      return state
+      # To make sure the OutOfRangeError exception can be handled well with
+      # async remote eager, we need to wrap the loop body in a `async_scope`.
+      with tf.experimental.async_scope():
+        while (num_steps == -1 or step < num_steps):
+          outputs = step_fn(iterator)
+          if reduce_fn is not None:
+            state = reduce_fn(state, outputs)
+          step += 1
+        return state
     except (StopIteration, tf.errors.OutOfRangeError):
+      tf.experimental.async_clear_error()
       return state
 
   return loop_fn
@@ -189,6 +193,11 @@ class SummaryManager(object):
     """Returns the underlying summary writer."""
     return self._summary_writer
 
+  def flush(self):
+    """Flush the underlying summary writer."""
+    if self._enabled:
+      tf.summary.flush(self._summary_writer)
+
   def write_summaries(self, items, always_write=True):
     """Write a bulk of summaries.
 
@@ -274,7 +283,7 @@ class IntervalTrigger(Trigger):
       self._last_trigger_value = value
       return True
 
-    if self._interval > 0:
+    if self._interval and self._interval > 0:
       if value >= self._last_trigger_value + self._interval:
         self._last_trigger_value = value
         return True
@@ -298,13 +307,16 @@ class EpochHelper(object):
     self._epoch_steps = epoch_steps
     self._global_step = global_step
     self._current_epoch = None
+    self._epoch_start_step = None
     self._in_epoch = False
 
   def epoch_begin(self):
     """Returns whether a new epoch should begin."""
     if self._in_epoch:
       return False
-    self._current_epoch = self._global_step.numpy() / self._epoch_steps
+    current_step = self._global_step.numpy()
+    self._epoch_start_step = current_step
+    self._current_epoch = current_step // self._epoch_steps
     self._in_epoch = True
     return True
 
@@ -313,12 +325,17 @@ class EpochHelper(object):
     if not self._in_epoch:
       raise ValueError("`epoch_end` can only be called inside an epoch")
     current_step = self._global_step.numpy()
-    epoch = current_step / self._epoch_steps
+    epoch = current_step // self._epoch_steps
 
     if epoch > self._current_epoch:
       self._in_epoch = False
       return True
     return False
+
+  @property
+  def batch_index(self):
+    """Index of the next batch within the current epoch."""
+    return self._global_step.numpy() - self._epoch_start_step
 
   @property
   def current_epoch(self):
