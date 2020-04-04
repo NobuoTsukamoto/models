@@ -75,7 +75,6 @@ def define_transformer_flags():
       tf_gpu_thread_mode=True,
       datasets_num_private_threads=True,
       enable_xla=True,
-      force_v2_in_keras_compile=True,
       fp16_implementation=True
   )
 
@@ -206,6 +205,12 @@ def define_transformer_flags():
           'use padded_decode, it has not been tested. In addition, this method '
           'will introduce unnecessary overheads which grow quadratically with '
           'the max sequence length.'))
+  flags.DEFINE_bool(
+      name='enable_checkpointing',
+      default=True,
+      help=flags_core.help_wrap(
+          'Whether to do checkpointing during training. When running under '
+          'benchmark harness, we will avoid checkpointing.'))
 
   flags_core.set_defaults(data_dir='/tmp/translate_ende',
                           model_dir='/tmp/transformer_model',
@@ -234,7 +239,10 @@ def get_callbacks(steps_per_epoch):
   """Returns common callbacks."""
   callbacks = []
   if FLAGS.enable_time_history:
-    time_callback = keras_utils.TimeHistory(FLAGS.batch_size, FLAGS.log_steps)
+    time_callback = keras_utils.TimeHistory(
+        FLAGS.batch_size,
+        FLAGS.log_steps,
+        FLAGS.model_dir if FLAGS.enable_tensorboard else None)
     callbacks.append(time_callback)
 
   if FLAGS.enable_tensorboard:
@@ -269,7 +277,7 @@ def build_stats(history, callbacks):
   if history and history.history:
     train_hist = history.history
     # Gets final loss from training.
-    stats['loss'] = train_hist['loss'][-1].item()
+    stats['loss'] = float(train_hist['loss'][-1])
 
   if not callbacks:
     return stats

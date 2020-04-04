@@ -22,6 +22,8 @@ import json
 import os
 import random
 import string
+
+from absl import logging
 import tensorflow.compat.v2 as tf
 
 from official.utils.misc import tpu_lib
@@ -155,37 +157,6 @@ def get_distribution_strategy(distribution_strategy="mirrored",
       "Unrecognized Distribution Strategy: %r" % distribution_strategy)
 
 
-def per_replica_batch_size(batch_size, num_gpus):
-  """For multi-gpu, batch-size must be a multiple of the number of GPUs.
-
-
-  Note that distribution strategy handles this automatically when used with
-  Keras. For using with Estimator, we need to get per GPU batch.
-
-  Args:
-    batch_size: Global batch size to be divided among devices. This should be
-      equal to num_gpus times the single-GPU batch_size for multi-gpu training.
-    num_gpus: How many GPUs are used with DistributionStrategies.
-
-  Returns:
-    Batch size per device.
-
-  Raises:
-    ValueError: if batch_size is not divisible by number of devices
-  """
-  if num_gpus <= 1:
-    return batch_size
-
-  remainder = batch_size % num_gpus
-  if remainder:
-    err = ('When running with multiple GPUs, batch size '
-           'must be a multiple of the number of available GPUs. Found {} '
-           'GPUs with a batch size of {}; try --batch_size={} instead.'
-          ).format(num_gpus, batch_size, batch_size - remainder)
-    raise ValueError(err)
-  return int(batch_size / num_gpus)
-
-
 # The `SyntheticDataset` is a temporary solution for generating synthetic data
 # directly on devices. It is only useful for Keras with Distribution
 # Strategies. We will have better support in `tf.data` or Distribution Strategy
@@ -252,7 +223,7 @@ class SyntheticIterator(object):
 def _monkey_patch_dataset_method(strategy):
   """Monkey-patch `strategy`'s `make_dataset_iterator` method."""
   def make_dataset(self, dataset):
-    tf.compat.v1.logging.info('Using pure synthetic data.')
+    logging.info('Using pure synthetic data.')
     with self.scope():
       if self.extended._global_batch_size:  # pylint: disable=protected-access
         return SyntheticDataset(dataset, self.num_replicas_in_sync)

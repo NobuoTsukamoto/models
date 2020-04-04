@@ -78,9 +78,10 @@ class Controller(object):
       eval_summary_dir: The directory to write eval summaries. If None, it will
         be set to `summary_dir`.
       eval_steps: Number of steps to run evaluation.
-      eval_interval: Step interval for evaluation. If None, will skip
-        evaluation. Note that evaluation only happens outside the training loop,
-        which the loop iteration is specify by `steps_per_loop` parameter.
+      eval_interval: Step interval for evaluation. If None, will skip evaluation
+        in the middle of training. Note that evaluation only happens outside the
+        training loop, which the loop iteration is specify by `steps_per_loop`
+        parameter.
 
     Raises:
       ValueError: If both `train_fn` and `eval_fn` are None.
@@ -94,13 +95,15 @@ class Controller(object):
     # TODO(rxsang): Support training until exhaustion by passing
     # `train_steps=-1`. Currently it cannot be supported with a host training
     # loop because break statements are not supported with distributed dataset.
-    if train_fn is not None and train_steps is None:
-      raise ValueError("`train_steps` is required when `train_fn` is provided.")
-    if train_fn is not None and steps_per_loop is None:
-      raise ValueError("`steps_per_loop` is required when `train_fn is "
-                       "provided.")
-    if not isinstance(steps_per_loop, int) or steps_per_loop < 1:
-      raise ValueError("`steps_per_loop` should be a positive integer")
+    if train_fn is not None:
+      if train_steps is None:
+        raise ValueError("`train_steps` is required when `train_fn` is "
+                         "provided.")
+      if steps_per_loop is None:
+        raise ValueError("`steps_per_loop` is required when `train_fn is "
+                         "provided.")
+      if not isinstance(steps_per_loop, int) or steps_per_loop < 1:
+        raise ValueError("`steps_per_loop` should be a positive integer")
     if summary_interval is not None and summary_interval <= 0:
       raise ValueError("`summary_interval` should be larger than 0")
 
@@ -109,36 +112,49 @@ class Controller(object):
     self.train_fn = train_fn
     self.eval_fn = eval_fn
     self.global_step = global_step
-
-    self.train_steps = train_steps
-
-    self.steps_per_loop = steps_per_loop
-
-    self.summary_dir = summary_dir or checkpoint_manager.directory
     self.checkpoint_manager = checkpoint_manager
 
-    self.summary_interval = summary_interval
-    summary_writer = tf.summary.create_file_writer(
-        self.summary_dir) if self.summary_interval else None
-    # TODO(rxsang): Consider pass SummaryManager directly into Controller for
-    # maximum customizability.
-    self.summary_manager = utils.SummaryManager(
-        summary_writer,
-        tf.summary.scalar,
-        global_step=self.global_step,
-        summary_interval=self.summary_interval)
+    if self.train_fn is not None:
+      self.train_steps = train_steps
+      self.steps_per_loop = steps_per_loop
+      if summary_dir:
+        self.summary_dir = summary_dir
+      elif checkpoint_manager:
+        self.summary_dir = checkpoint_manager.directory
+      else:
+        self.summary_dir = None
+
+      self.summary_interval = summary_interval
+      if self.summary_dir and self.summary_interval:
+        summary_writer = tf.summary.create_file_writer(self.summary_dir)
+      else:
+        summary_writer = None
+      # TODO(rxsang): Consider pass SummaryManager directly into Controller for
+      # maximum customizability.
+      self.summary_manager = utils.SummaryManager(
+          summary_writer,
+          tf.summary.scalar,
+          global_step=self.global_step,
+          summary_interval=self.summary_interval)
+
+    if self.eval_fn is not None:
+      eval_summary_dir = eval_summary_dir or self.summary_dir
+      eval_summary_writer = tf.summary.create_file_writer(
+          eval_summary_dir) if eval_summary_dir else None
+      self.eval_summary_manager = utils.SummaryManager(
+          eval_summary_writer, tf.summary.scalar, global_step=self.global_step)
+
+      self.eval_steps = eval_steps
+      self.eval_interval = eval_interval
+
+      # Creates and initializes the interval triggers.
+      self.eval_trigger = utils.IntervalTrigger(self.eval_interval,
+                                                self.global_step.numpy())  # pytype: disable=attribute-error
+
     if self.global_step:
       tf.summary.experimental.set_step(self.global_step)
 
-    self.eval_summary_dir = eval_summary_dir or self.summary_dir
-    eval_summary_writer = tf.summary.create_file_writer(self.eval_summary_dir)
-    self.eval_summary_manager = utils.SummaryManager(
-        eval_summary_writer, tf.summary.scalar, global_step=self.global_step)
-
-    self.eval_steps = eval_steps
-    self.eval_interval = eval_interval
-
-    # Restore Model if needed.
+    # Restores the model if needed.
     if self.checkpoint_manager is not None:
       model_restored = self._restore_model()
       if not model_restored and self.checkpoint_manager.checkpoint_interval:
@@ -147,10 +163,6 @@ class Controller(object):
         ckpt_path = self.checkpoint_manager.save(
             checkpoint_number=self.global_step)
         logging.info("Saved checkpoins in %s", ckpt_path)
-
-    # Create and initialize the interval triggers.
-    self.eval_trigger = utils.IntervalTrigger(self.eval_interval,
-                                              self.global_step.numpy())
 
   def _restore_model(self, checkpoint_path=None):
     """Restore or initialize the model.
@@ -184,11 +196,12 @@ class Controller(object):
     self._log_info(info)
 
     self.eval_summary_manager.write_summaries(eval_outputs)
+    self.eval_summary_manager.flush()
 
   def _maybe_save_checkpoints(self, current_step, force_trigger=False):
-    if self.checkpoint_manager.checkpoint_interval:
+    if self.checkpoint_manager and self.checkpoint_manager.checkpoint_interval:
       ckpt_path = self.checkpoint_manager.save(
-          checkpoint_number=current_step, check_interval=force_trigger)
+          checkpoint_number=current_step, check_interval=not force_trigger)
       if ckpt_path is not None:
         logging.info("Saved checkpoins in %s", ckpt_path)
 
@@ -263,6 +276,7 @@ class Controller(object):
         self._maybe_evaluate(current_step)
 
     self.summary_manager.write_summaries(train_outputs, always_write=True)
+    self.summary_manager.flush()
     self._maybe_save_checkpoints(current_step, force_trigger=True)
     if evaluate:
       self._maybe_evaluate(current_step, force_trigger=True)

@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Keras-based transformer block layer."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
@@ -23,6 +23,7 @@ import tensorflow as tf
 
 from official.nlp.modeling.layers import attention
 from official.nlp.modeling.layers import dense_einsum
+from official.nlp.modeling.layers.util import tf_function_if_eager
 
 
 @tf.keras.utils.register_keras_serializable(package="Text")
@@ -32,7 +33,7 @@ class Transformer(tf.keras.layers.Layer):
   This layer implements the Transformer from "Attention Is All You Need".
   (https://arxiv.org/abs/1706.03762).
 
-  Attributes:
+  Arguments:
     num_attention_heads: Number of attention heads.
     intermediate_size: Size of the intermediate layer.
     intermediate_activation: Activation for the intermediate layer.
@@ -99,7 +100,7 @@ class Transformer(tf.keras.layers.Layer):
           "heads (%d)" % (hidden_size, self._num_heads))
     self._attention_head_size = int(hidden_size // self._num_heads)
 
-    self._attention_layer = attention.Attention(
+    self._attention_layer = attention.MultiHeadAttention(
         num_heads=self._num_heads,
         head_size=self._attention_head_size,
         dropout_rate=self._attention_dropout_rate,
@@ -142,10 +143,8 @@ class Transformer(tf.keras.layers.Layer):
         kernel_constraint=self._kernel_constraint,
         bias_constraint=self._bias_constraint,
         name="intermediate")
-    # Use float32 in intermediate gelu activation for numeric stability.
-    # TODO(b/149117297): investigate gelu numeric stability.
     self._intermediate_activation_layer = tf.keras.layers.Activation(
-        self._intermediate_activation, dtype=tf.float32)
+        self._intermediate_activation)
     self._output_dense = dense_einsum.DenseEinsum(
         output_shape=hidden_size,
         kernel_initializer=self._kernel_initializer,
@@ -215,8 +214,16 @@ class Transformer(tf.keras.layers.Layer):
     layer_output = self._output_dense(intermediate_output)
     layer_output = self._output_dropout(layer_output)
     # During mixed precision training, attention_output is from layer norm and
-    # is always fp32 for now. cast layer_output to fp32 for the subsequent add.
+    # is always fp32 for now. Cast layer_output to fp32 for the subsequent
+    # add.
     layer_output = tf.cast(layer_output, tf.float32)
     layer_output = self._output_layer_norm(layer_output + attention_output)
 
     return layer_output
+
+
+class CompiledTransformer(Transformer):
+
+  @tf_function_if_eager(experimental_compile=True)
+  def call(self, inputs):
+    return super(CompiledTransformer, self).call(inputs)

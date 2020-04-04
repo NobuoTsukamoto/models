@@ -18,7 +18,7 @@
 import copy
 import functools
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from tensorflow.contrib import slim as contrib_slim
 
 from deeplab.core import nas_network
@@ -31,11 +31,13 @@ from nets.mobilenet import mobilenet_v3
 
 slim = contrib_slim
 
-# Default end point for MobileNetv2.
+# Default end point for MobileNetv2 (one-based indexing).
 _MOBILENET_V2_FINAL_ENDPOINT = 'layer_18'
+# Default end point for MobileNetv3.
 _MOBILENET_V3_LARGE_FINAL_ENDPOINT = 'layer_17'
 _MOBILENET_V3_SMALL_FINAL_ENDPOINT = 'layer_13'
-_MOBILENET_EDGETPU_FINAL_ENDPOINT = 'layer_23'
+# Default end point for EdgeTPU Mobilenet.
+_MOBILENET_EDGETPU = 'layer_24'
 
 
 def _mobilenet_v2(net,
@@ -171,6 +173,29 @@ def mobilenet_v3_large_seg(net,
       final_endpoint=_MOBILENET_V3_LARGE_FINAL_ENDPOINT)
 
 
+def mobilenet_edgetpu(net,
+                      depth_multiplier,
+                      output_stride,
+                      divisible_by=None,
+                      reuse=None,
+                      scope=None,
+                      final_endpoint=None):
+  """EdgeTPU version of mobilenet model for segmentation task."""
+  del divisible_by
+  del final_endpoint
+  conv_defs = copy.deepcopy(mobilenet_v3.V3_EDGETPU)
+
+  return _mobilenet_v3(
+      net,
+      depth_multiplier=depth_multiplier,
+      output_stride=output_stride,
+      divisible_by=8,
+      conv_defs=conv_defs,
+      reuse=reuse,
+      scope=scope,  # the scope is 'MobilenetEdgeTPU'
+      final_endpoint=_MOBILENET_EDGETPU)
+
+
 def mobilenet_v3_small_seg(net,
                            depth_multiplier,
                            output_stride,
@@ -203,66 +228,12 @@ def mobilenet_v3_small_seg(net,
       final_endpoint=_MOBILENET_V3_SMALL_FINAL_ENDPOINT)
 
 
-def mobilenet_edge_tpu(net,
-                        depth_multiplier,
-                        output_stride,
-                        conv_defs=None,
-                        divisible_by=None,
-                        reuse=None,
-                        scope=None,
-                        final_endpoint=None):
-  """Auxiliary function to build mobilenet edgetpu.
-
-  Args:
-    net: Input tensor of shape [batch_size, height, width, channels].
-    depth_multiplier: Float multiplier for the depth (number of channels)
-      for all convolution ops. The value must be greater than zero. Typical
-      usage will be to set this value in (0, 1) to reduce the number of
-      parameters or computation cost of the model.
-    output_stride: An integer that specifies the requested ratio of input to
-      output spatial resolution. If not None, then we invoke atrous convolution
-      if necessary to prevent the network from reducing the spatial resolution
-      of the activation maps. Allowed values are 8 (accurate fully convolutional
-      mode), 16 (fast fully convolutional mode), 32 (classification mode).
-    conv_defs: A list of ConvDef namedtuples specifying the net architecture.
-    divisible_by: None (use default setting) or an integer that ensures all
-      layers # channels will be divisible by this number. Used in MobileNet.
-    reuse: Reuse model variables.
-    scope: Optional variable scope.
-    final_endpoint: The endpoint to construct the network up to.
-
-  Returns:
-    net: The output tensor.
-    end_points: A set of activations for external use.
-
-  Raises:
-    ValueError: If conv_defs or final_endpoint is not specified.
-  """
-  del divisible_by
-  del final_endpoint
-  if conv_defs is None:
-    conv_defs = mobilenet_v3.V3_EDGETPU
-  with tf.variable_scope(
-      scope, 'MobilenetEdgeTPU', [net], reuse=reuse) as scope:
-    if conv_defs is None:
-      raise ValueError('conv_defs must be specified for mobilenet edgetpu.')
-    net, end_points = mobilenet_v3.mobilenet_base(
-        net,
-        depth_multiplier=depth_multiplier,
-        conv_defs=conv_defs,
-        output_stride=output_stride,
-        final_endpoint=_MOBILENET_EDGETPU_FINAL_ENDPOINT,
-        scope=scope)
-
-    return net, end_points
-
-
 # A map from network name to network function.
 networks_map = {
     'mobilenet_v2': _mobilenet_v2,
+    'mobilenet_edgetpu': mobilenet_edgetpu,
     'mobilenet_v3_large_seg': mobilenet_v3_large_seg,
     'mobilenet_v3_small_seg': mobilenet_v3_small_seg,
-    'mobilenet_edge_tpu': mobilenet_edge_tpu,
     'resnet_v1_18': resnet_v1_beta.resnet_v1_18,
     'resnet_v1_18_beta': resnet_v1_beta.resnet_v1_18_beta,
     'resnet_v1_50': resnet_v1_beta.resnet_v1_50,
@@ -350,9 +321,9 @@ def mobilenet_v2_arg_scope(is_training=True,
 # A map from network name to network arg scope.
 arg_scopes_map = {
     'mobilenet_v2': mobilenet_v2.training_scope,
+    'mobilenet_edgetpu': mobilenet_v2_arg_scope,
     'mobilenet_v3_large_seg': mobilenet_v2_arg_scope,
     'mobilenet_v3_small_seg': mobilenet_v2_arg_scope,
-    'mobilenet_edge_tpu': mobilenet_v2_arg_scope,
     'resnet_v1_18': resnet_v1_beta.resnet_arg_scope,
     'resnet_v1_18_beta': resnet_v1_beta.resnet_arg_scope,
     'resnet_v1_50': resnet_v1_beta.resnet_arg_scope,
@@ -390,13 +361,6 @@ networks_to_feature_maps = {
             4: ['layer_2/depthwise_output'],
             8: ['layer_4/depthwise_output'],
             16: ['layer_9/depthwise_output'],
-        },
-    },
-    'mobilenet_edge_tpu': {
-        DECODER_END_POINTS: {
-            4: ['layer_3/depthwise_output'],
-            8: ['layer_6/depthwise_output'],
-            16: ['layer_11/depthwise_output'],
         },
     },
     'resnet_v1_18': {
@@ -491,9 +455,9 @@ networks_to_feature_maps = {
 # ImageNet pretrained versions of these models.
 name_scope = {
     'mobilenet_v2': 'MobilenetV2',
+    'mobilenet_edgetpu': 'MobilenetEdgeTPU',
     'mobilenet_v3_large_seg': 'MobilenetV3',
     'mobilenet_v3_small_seg': 'MobilenetV3',
-    'mobilenet_edge_tpu': 'MobilenetEdgeTPU',
     'resnet_v1_18': 'resnet_v1_18',
     'resnet_v1_18_beta': 'resnet_v1_18',
     'resnet_v1_50': 'resnet_v1_50',
@@ -529,9 +493,9 @@ def _preprocess_zero_mean_unit_range(inputs, dtype=tf.float32):
 
 _PREPROCESS_FN = {
     'mobilenet_v2': _preprocess_zero_mean_unit_range,
+    'mobilenet_edgetpu': _preprocess_zero_mean_unit_range,
     'mobilenet_v3_large_seg': _preprocess_zero_mean_unit_range,
     'mobilenet_v3_small_seg': _preprocess_zero_mean_unit_range,
-    'mobilenet_edge_tpu': _preprocess_zero_mean_unit_range,
     'resnet_v1_18': _preprocess_subtract_imagenet_mean,
     'resnet_v1_18_beta': _preprocess_zero_mean_unit_range,
     'resnet_v1_50': _preprocess_subtract_imagenet_mean,

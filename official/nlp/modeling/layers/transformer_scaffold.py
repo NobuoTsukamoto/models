@@ -13,12 +13,13 @@
 # limitations under the License.
 # ==============================================================================
 """Keras-based transformer scaffold layer."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
 from __future__ import print_function
 
+import gin
 import tensorflow as tf
 
 from official.nlp.modeling.layers import attention
@@ -26,6 +27,7 @@ from official.nlp.modeling.layers import dense_einsum
 
 
 @tf.keras.utils.register_keras_serializable(package="Text")
+@gin.configurable
 class TransformerScaffold(tf.keras.layers.Layer):
   """Transformer scaffold layer.
 
@@ -35,7 +37,7 @@ class TransformerScaffold(tf.keras.layers.Layer):
   `attention_cfg`, in which case the scaffold will instantiate the class with
   the config, or pass a class instance to `attention_cls`.
 
-  Attributes:
+  Arguments:
     num_attention_heads: Number of attention heads.
     intermediate_size: Size of the intermediate layer.
     intermediate_activation: Activation for the intermediate layer.
@@ -57,7 +59,7 @@ class TransformerScaffold(tf.keras.layers.Layer):
                num_attention_heads,
                intermediate_size,
                intermediate_activation,
-               attention_cls=attention.Attention,
+               attention_cls=attention.MultiHeadAttention,
                attention_cfg=None,
                dropout_rate=0.0,
                attention_dropout_rate=0.0,

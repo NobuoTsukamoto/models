@@ -1,3 +1,4 @@
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +14,15 @@
 # limitations under the License.
 # ==============================================================================
 """Transformer-based text encoder network."""
-
+# pylint: disable=g-classes-have-attributes
 from __future__ import absolute_import
 from __future__ import division
 # from __future__ import google_type_annotations
 from __future__ import print_function
 
 import inspect
+
+import gin
 import tensorflow as tf
 
 from tensorflow.python.keras.engine import network  # pylint: disable=g-direct-tensorflow-import
@@ -27,6 +30,7 @@ from official.nlp.modeling import layers
 
 
 @tf.keras.utils.register_keras_serializable(package='Text')
+@gin.configurable
 class EncoderScaffold(network.Network):
   """Bi-directional Transformer-based encoder network scaffold.
 
@@ -46,7 +50,7 @@ class EncoderScaffold(network.Network):
   If the hidden_cls is not overridden, a default transformer layer will be
   instantiated.
 
-  Attributes:
+  Arguments:
     num_output_classes: The output size of the classification layer.
     classification_layer_initializer: The initializer for the classification
       layer.
@@ -96,7 +100,6 @@ class EncoderScaffold(network.Network):
       hidden_cls=layers.Transformer,
       hidden_cfg=None,
       **kwargs):
-    print(embedding_cfg)
     self._self_setattr_tracking = False
     self._hidden_cls = hidden_cls
     self._hidden_cfg = hidden_cfg
@@ -171,7 +174,8 @@ class EncoderScaffold(network.Network):
 
     for _ in range(num_hidden_instances):
       if inspect.isclass(hidden_cls):
-        layer = self._hidden_cls(**hidden_cfg)
+        layer = self._hidden_cls(
+            **hidden_cfg) if hidden_cfg else self._hidden_cls()
       else:
         layer = self._hidden_cls
       data = layer([data, attention_mask])
