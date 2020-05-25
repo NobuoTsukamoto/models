@@ -101,9 +101,9 @@ _ADE20K_INFORMATION = DatasetDescriptor(
 
 _AI_EDGE_SEG_INFORMATION = DatasetDescriptor(
     splits_to_sizes={
-        'train': 3588,  # num of samples in images/training
-        'train_fine': 358, # num of samples in images/training fine
-        'val': 897,  # num of samples in images/validation
+        'train': 5383,  # num of samples in images/training
+        'train_fine': 1076, # num of samples in images/training fine
+        'val': 1345,  # num of samples in images/validation
     },
     num_classes=19,
     ignore_label=255,
